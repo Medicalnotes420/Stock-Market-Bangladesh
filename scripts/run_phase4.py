@@ -16,7 +16,7 @@ from dse_quant.backtest.walkforward import stitch, switch_cost  # noqa: E402
 from dse_quant.risk import LIMITS  # noqa: E402
 from dse_quant.data.load import load_a2_types  # noqa: E402
 from dse_quant.panels import build_panels, eligible_mask  # noqa: E402
-from dse_quant.regime import classify, fill_index, proxy_returns  # noqa: E402
+from dse_quant.regime import classify, inputs as regime_inputs, proxy_returns  # noqa: E402
 from dse_quant.strategies import GRIDS, make  # noqa: E402
 
 OUT = Path("results")
@@ -41,12 +41,8 @@ dsex_r = m.dsex.pct_change(fill_method=None)
 both = dsex_r.notna() & prox.notna() & m.dsex.shift().notna()
 proxy_check = {"overlap_days": int(both.sum()), "corr_daily": round(float(dsex_r[both].corr(prox[both])), 3),
                "dsex_missing_filled": int(m.dsex.isna().sum())}
-m["dsex"] = fill_index(m.dsex, prox)
-eq_cols = [t for t in p.tickers if types.get(t) == "Equity"]
-c = p.close[eq_cols]
-above = (c > c.rolling(50, min_periods=40).mean()).sum(axis=1) / c.notna().sum(axis=1)
-lock_frac = (p.lower_lock & E).sum(axis=1) / E.sum(axis=1).replace(0, np.nan)
-regime = classify(m, above, lock_frac.fillna(0))
+m, above, lock_frac = regime_inputs(p, E, types, m)
+regime = classify(m, above, lock_frac)
 reg_counts = regime.groupby(regime.index.year).value_counts().unstack(fill_value=0)
 log("regime done", proxy_check)
 

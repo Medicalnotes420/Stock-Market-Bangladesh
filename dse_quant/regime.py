@@ -21,6 +21,18 @@ def fill_index(dsex, proxy):
     return out
 
 
+def inputs(p, elig, types, market):
+    """Everything classify() needs, built one way for both backtest and paper harness:
+    market with DSEX gaps proxy-filled, share of equities above their 50-day SMA, share of the
+    eligible universe closing at the lower limit."""
+    m = market.reindex(p.dates).copy()
+    m["dsex"] = fill_index(m.dsex, proxy_returns(p, types))
+    c = p.close[[t for t in p.tickers if types.get(t) == "Equity"]]
+    above = (c > c.rolling(50, min_periods=40).mean()).sum(axis=1) / c.notna().sum(axis=1)
+    lock_frac = (p.lower_lock & elig).sum(axis=1) / elig.sum(axis=1).replace(0, np.nan)
+    return m, above, lock_frac.fillna(0)
+
+
 def classify(m, pct_above_50, lock_frac):
     """m: DataFrame[dsex, turnover, adv, dec] by date. Returns RISK_ON / NEUTRAL / RISK_OFF / STRESS."""
     c = m.dsex
