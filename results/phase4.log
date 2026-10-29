@@ -1,13 +1,13 @@
-[    10s] panels built
-[    11s] regime done {'overlap_days': 2597, 'corr_daily': 0.885, 'dsex_missing_filled': 340}
-[    30s] C1 grid done
-[    63s] C2 grid done
-[    93s] C3 grid done
-[   108s] C4 grid done
-[   119s] C1 walk-forward done
-[   148s] C2 walk-forward done
-[   179s] C3 walk-forward done
-[   193s] C4 walk-forward done
+[    23s] panels built
+[    24s] regime done {'overlap_days': 2597, 'corr_daily': 0.885, 'dsex_missing_filled': 340}
+[    70s] C1 grid done
+[   152s] C2 grid done
+[   247s] C3 grid done
+[   284s] C4 grid done
+[   317s] C1 walk-forward done
+[   391s] C2 walk-forward done
+[   435s] C3 walk-forward done
+[   468s] C4 walk-forward done
    strategy  regime  gap_excl  oos_sharpe  oos_mdd  oos_trades  oos_win_rate  oos_pf  oos_sharpe_1_5x  oos_sharpe_2x  oos_switches  oos_trades_through_gap oos_kill_date  neighbourhood_pos    dsr  oos_sharpe_ex_floor  held_sharpe held_kill_date criteria_passed verdict
 0        C1    True      True      -0.272    0.135          71         0.282   0.963           -0.453         -0.615             3                   0.014          None              0.333  0.001               -0.321       -0.666           None         nnnnYnn  REJECT
 1        C1    True     False      -0.066    0.096          60         0.300   1.143           -0.253         -0.421             3                   0.017          None              0.333  0.004               -0.123       -0.583           None         nnnnYnn  REJECT
@@ -39,4 +39,4 @@
  },
  "n_trials": 132
 }
-[   193s] done
+[   468s] done

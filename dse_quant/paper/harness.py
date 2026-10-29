@@ -29,7 +29,7 @@ def load_state(path):
 
 def author_flags(p, t):
     """Indicator values and the "My Secret Series" rule flags (docs/SECRETS_LEARNINGS.md) at the latest bar.
-    The flags restate the author's rules; whether they work is what docs/SECRETS_RESULTS.md tests."""
+    The flags restate the author's rules; whether they work is what docs/SECRETS_RESULTS.md has the backtest results."""
     h, l, c = (x[t].ffill() for x in (p.high, p.low, p.close))
     v = p.value[t].fillna(0)
     r, (ml, ms), (bu, _, _, bw), a = ind.rsi(c), ind.macd(c), ind.bollinger(c), ind.aroon_up(h)
