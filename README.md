@@ -17,6 +17,7 @@ python scripts/build_clean.py               # data/raw -> data/clean (~2 min)
 python -W ignore scripts/run_phase4.py      # backtests -> results/ (~3 min)
 python scripts/paper_run.py                 # daily paper run -> data/paper/ (open data/paper/status.html)
 ```
+Stocks for the status page's watchlist go in `watchlist.txt`, one DSE trading code per line.
 `paper_run.py --replay N` replays the last N sessions. It needs a fresh `data/paper/` folder, because the harness refuses dates older than its last run.
 
 ## Docs

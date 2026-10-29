@@ -44,7 +44,7 @@ h1{{font-size:20px;margin:0 0 4px}}.mute{{color:var(--mute)}}.ok{{color:var(--ok
 .card{{border:1px solid var(--line);border-radius:8px;padding:10px}}.card b{{display:block;font-size:18px}}
 .wrap{{overflow-x:auto}}table{{border-collapse:collapse;width:100%}}td,th{{border-bottom:1px solid var(--line);padding:6px;text-align:left;white-space:nowrap}}
 </style></head><body><h1>DSE paper trading status</h1><p class="mute">Journal: {runs} runs, {first} to {last}. Strategy: none enabled.</p>
-<div class="cards">{cards}</div>{alerts}<h2>Last {n} runs</h2><div class="wrap"><table>
+<div class="cards">{cards}</div>{alerts}{watch}<h2>Last {n} runs</h2><div class="wrap"><table>
 <tr><th>As of</th><th>Gate</th><th>Reasons</th><th>Regime</th><th>Equity (Tk)</th><th>Alerts</th></tr>{rows}</table></div></body></html>"""
 
 
@@ -58,12 +58,23 @@ def status_page(journal_path, out_path, last_n=30):
         ("Latest run", escape(r["asof"])), ("Gate", gate), ("Regime", escape(str(r.get("regime")))),
         ("Equity", eq(r.get("equity"))), ("Max drawdown", f"{s['max_drawdown']:.1%}"),
         ("Kill switch", '<span class="bad">FIRED</span>' if r.get("kill") else "off")])
-    alerts = "".join(f'<p class="bad">⚠ {escape(a)}</p>' for a in s["alerts"])
+    alerts = "".join(f'<p class="bad">⚠ {escape(a)}</p>' for a in s["alerts"] + r.get("alerts", []))
+    yes = lambda b, bad=True: f'<span class="{"bad" if bad else "ok"}">yes</span>' if b else "no"
+    w = r.get("watchlist") or {}
+    watch = "" if not w else (
+        '<h2>Watchlist</h2><div class="wrap"><table><tr><th>Stock</th><th>Last bar</th><th>Close (Tk)</th>'
+        '<th>Change</th><th>Lower lock</th><th>Upper lock</th><th>20-day value (Tk)</th><th>Eligible</th>'
+        '<th>Unexplained gap (20d)</th></tr>' + "".join(
+            f"<tr><td>{escape(t)}</td><td>{escape(v['last_bar'])}</td><td>{v['close']:,.2f}</td>"
+            f"<td>{'n/a' if v['change'] is None else format(v['change'], '+.2%')}</td>"
+            f"<td>{yes(v['lower_lock'])}</td><td>{yes(v['upper_lock'], bad=False)}</td><td>{eq(v['adtv20'])}</td>"
+            f"<td>{'yes' if v['eligible'] else '<span class=\"mute\">no (below liquidity floor or filter)</span>'}</td>"
+            f"<td>{yes(v['gap_20d'])}</td></tr>" for t, v in w.items()) + "</table></div>")
     body = "".join(
         f"<tr><td>{escape(x['asof'])}</td><td>{'OPEN' if x.get('gate_open') else 'CLOSED'}</td>"
         f"<td>{escape(', '.join(x.get('gate_reasons', [])))}</td><td>{escape(str(x.get('regime')))}</td>"
         f"<td>{eq(x.get('equity'))}</td><td>{escape('; '.join(x.get('alerts', [])))}</td></tr>"
         for x in reversed(rows[-last_n:]))
     Path(out_path).write_text(PAGE.format(runs=s["runs"], first=escape(str(s["first"])), last=escape(str(s["last"])),
-                                          cards=cards, alerts=alerts, n=min(last_n, len(rows)), rows=body),
+                                          cards=cards, alerts=alerts, watch=watch, n=min(last_n, len(rows)), rows=body),
                               encoding="utf-8")

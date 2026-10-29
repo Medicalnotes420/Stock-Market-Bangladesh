@@ -90,6 +90,18 @@ class Harness(unittest.TestCase):
     def test_corrupt_state_file_never_skips_journal(self):
         self.check_bad_state("{not json")
 
+    def test_watchlist_reports_each_stock_and_flags_unknown(self):
+        e = daily_run(self.df, self.m, TYPES, self.last, watch=["T1", "NOPE"], **self.paths)
+        w = e["watchlist"]["T1"]
+        last = self.df[self.df.ticker == "T1"].sort_values("date")
+        self.assertAlmostEqual(w["close"], last.close.iloc[-1])
+        self.assertAlmostEqual(w["change"], last.close.iloc[-1] / last.close.iloc[-2] - 1)
+        self.assertEqual(w["last_bar"], str(self.last.date()))
+        for k in ("lower_lock", "upper_lock", "adtv20", "eligible", "gap_20d"):
+            self.assertIn(k, w)
+        self.assertNotIn("NOPE", e["watchlist"])
+        self.assertTrue(any("NOPE" in a for a in e["alerts"]))
+
     def test_rerun_same_day_keeps_daily_loss_baseline(self):
         prev = str(self.df.date.unique()[-2].date())
         self.paths["state_path"].write_text(json.dumps(
@@ -126,7 +138,10 @@ class StatusPage(unittest.TestCase):
         rows = [{"asof": "2026-01-21", "gate_open": True, "gate_reasons": [], "regime": "RISK_OFF",
                  "equity": 1e7, "kill": False, "alerts": []},
                 {"asof": "2026-01-22", "gate_open": False, "gate_reasons": ["stale_data"], "regime": "UNKNOWN",
-                 "equity": None, "kill": False, "alerts": ["input error: <script>x</script>"]}]
+                 "equity": None, "kill": False, "alerts": ["input error: <script>x</script>"],
+                 "watchlist": {"AL-HAJTEX": {"last_bar": "2026-01-22", "close": 125.1, "change": -0.012,
+                                             "lower_lock": False, "upper_lock": False, "adtv20": 1.8e7,
+                                             "eligible": False, "gap_20d": False}}}]
         (tmp / "j.jsonl").write_text("\n".join(json.dumps(r) for r in rows))
         status_page(tmp / "j.jsonl", tmp / "status.html")
         page = (tmp / "status.html").read_text(encoding="utf-8")
@@ -135,6 +150,8 @@ class StatusPage(unittest.TestCase):
         self.assertIn("stale_data", page)
         self.assertNotIn("<script>x", page)          # journal text is data, never markup
         self.assertIn("&lt;script&gt;", page)
+        self.assertIn("AL-HAJTEX", page)
+        self.assertIn("125.1", page)
 
 
 class Monitor(unittest.TestCase):

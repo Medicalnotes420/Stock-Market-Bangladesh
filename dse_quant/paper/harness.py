@@ -26,10 +26,23 @@ def load_state(path):
     return {"cash": START_CASH, "peak_equity": START_CASH, "day_start_equity": START_CASH, "positions": {}}
 
 
-def daily_run(prices, market, types, asof, state_path, journal_path, orders_dir, strategy=None):
+def watch_row(p, elig, t):
+    """What the status page shows for one watched stock, at its latest bar (raw traded prices)."""
+    c = p.close_raw[t].dropna()
+    d = c.index[-1]
+    adtv = p.adtv[t].iloc[-1]
+    return {"last_bar": str(d.date()), "close": float(c.iloc[-1]),
+            "change": float(c.iloc[-1] / c.iloc[-2] - 1) if len(c) > 1 else None,
+            "lower_lock": bool(p.lower_lock.at[d, t]), "upper_lock": bool(p.upper_lock.at[d, t]),
+            "adtv20": None if pd.isna(adtv) else float(adtv), "eligible": bool(elig[t].iloc[-1]),
+            "gap_20d": bool(p.gap_flag[t].iloc[-20:].any())}
+
+
+def daily_run(prices, market, types, asof, state_path, journal_path, orders_dir, strategy=None, watch=()):
     asof = pd.Timestamp(asof)
     entry = {"run_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "asof": str(asof.date()),
-             "strategy": strategy or "none", "alerts": [], "orders": [], "exit_list": [], "regime": "UNKNOWN"}
+             "strategy": strategy or "none", "alerts": [], "orders": [], "exit_list": [], "regime": "UNKNOWN",
+             "watchlist": {}}
     status, last_close, adtv = None, {}, {}
     try:
         hist = prices[prices.date <= asof]
@@ -46,6 +59,11 @@ def daily_run(prices, market, types, asof, state_path, journal_path, orders_dir,
             m, above, lock_frac = regime_inputs(p, elig, types, market)
             entry["regime"] = str(classify(m, above, lock_frac).iloc[-1])
         entry["data_status"] = {k: str(v) for k, v in status.items()}
+        for t in watch:
+            if t in p.close.columns and p.close_raw[t].notna().any():
+                entry["watchlist"][t] = watch_row(p, elig, t)
+            else:
+                entry["alerts"].append(f"watchlist: {t} not in data")
     except Exception as e:  # corrupt or missing input: journal it, trade nothing
         entry["alerts"].append(f"input error: {type(e).__name__}: {e}")
 

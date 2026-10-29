@@ -27,8 +27,10 @@ market = pd.read_csv("data/clean/market.csv", parse_dates=["date"]).set_index("d
 types = {**json.load(open("data/clean/report.json"))["dead_tickers_from_a1"], **load_a2_types()}
 days = sorted(prices.date.unique())[-a.replay:] if a.replay else [pd.Timestamp(a.asof)]
 paths = dict(state_path=OUT / "state.json", journal_path=OUT / "journal.jsonl", orders_dir=OUT / "orders")
+watch = [l.strip().upper() for l in Path("watchlist.txt").read_text().splitlines()
+         if l.strip() and not l.startswith("#")] if Path("watchlist.txt").exists() else []
 for d in days:
-    e = daily_run(prices, market, types, d, **paths)
+    e = daily_run(prices, market, types, d, watch=watch, **paths)
     print(e["asof"], "regime", e["regime"], "gate", "OPEN" if e["gate_open"] else f"CLOSED {e['gate_reasons']}",
           "orders", len(e["orders"]), "alerts", e["alerts"])
 print(json.dumps(summarize(paths["journal_path"]), indent=1))
