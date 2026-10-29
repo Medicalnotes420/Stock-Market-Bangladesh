@@ -163,6 +163,67 @@ class Engine(unittest.TestCase):
         self.assertTrue((res.positions >= 0).all().all())
         self.assertTrue((res.cash >= -1e-6).all())
 
+    def held_strategy(self, **attrs):
+        class S(AlwaysBuy):
+            max_hold = 10_000
+
+            def entries(self, t):
+                return [0] if t == 0 else []
+        for k, v in attrs.items():
+            setattr(S, k, v)
+        return S()
+
+    def run_path(self, closes, strat, regime=None, **cfg):
+        p, elig = one_stock(closes)
+        p.atr.iloc[:, :] = 1.0
+        return p, run(p, strat, self.cfg(**cfg), elig=elig, regime=regime)
+
+    def test_fixed_stop_exits(self):
+        # entry t1 @10, stop 10 - 1.5 = 8.5; close 8.4 at t5 -> sell t6
+        p, res = self.run_path([10, 10, 10, 9.6, 9.0, 8.4, 8.4, 8.4], self.held_strategy(stop_atr=1.5))
+        self.assertEqual(res.trades.iloc[0].exit_date, p.dates[6])
+
+    def test_no_stop_exit_above_level(self):
+        _, res = self.run_path([10, 10, 10, 9.6, 9.0, 8.6, 8.6, 8.6], self.held_strategy(stop_atr=1.5))
+        self.assertEqual(len(res.trades), 0)
+
+    def test_trailing_stop_follows_peak(self):
+        # peak 12 -> trail level 10.5; close 10.4 at t6 -> sell t7 (a fixed stop at 8.5 would not fire)
+        p, res = self.run_path([10, 10, 11, 12, 11.4, 10.8, 10.4, 10.4, 10.4],
+                               self.held_strategy(stop_atr=1.5, trail=True))
+        self.assertEqual(res.trades.iloc[0].exit_date, p.dates[7])
+
+    def test_profit_target(self):
+        # target 10 + 1 = 11; close 11.0 at t3 -> sell t4
+        p, res = self.run_path([10, 10, 10.5, 11.0, 11.2, 11.2], self.held_strategy(target_atr=1.0))
+        self.assertEqual(res.trades.iloc[0].exit_date, p.dates[4])
+
+    def test_risk_off_blocks_entries(self):
+        closes = [10.0] * 8
+        reg = pd.Series("RISK_OFF", index=pd.bdate_range("2020-01-01", periods=8))
+        _, res = self.run_path(closes, AlwaysBuy(), regime=reg, use_regime=True)
+        self.assertEqual(res.positions.values.sum(), 0)
+
+    def test_neutral_halves_size(self):
+        closes = [10.0] * 8
+        reg = pd.Series("NEUTRAL", index=pd.bdate_range("2020-01-01", periods=8))
+        _, res = self.run_path(closes, self.held_strategy(), regime=reg, use_regime=True)
+        self.assertEqual(res.positions.iloc[-1].max(), 2500)   # 0.5 * 0.005 * 1e6 / ATR 1
+
+    def test_stress_sells_everything(self):
+        closes = [10.0] * 8
+        reg = pd.Series("RISK_ON", index=pd.bdate_range("2020-01-01", periods=8))
+        reg.iloc[4] = "STRESS"
+        p, res = self.run_path(closes, self.held_strategy(), regime=reg, use_regime=True)
+        self.assertEqual(res.trades.iloc[0].exit_date, p.dates[5])
+
+    def test_trade_counts_gap_days_while_held(self):
+        p, elig = one_stock([10.0] * 8)
+        p.atr.iloc[:, :] = 1.0
+        p.gap_flag.iloc[3, 0] = True            # unexplained gap while the position is held
+        res = run(p, AlwaysBuy(), self.cfg(), elig=elig)
+        self.assertEqual(res.trades.iloc[0].gap_days, 1)
+
     def test_delisted_written_off(self):
         df = clean(pd.concat([bars("S", [10.0] * 5, volume=1e9), bars("Z", [1.0] * 80, volume=1e9)]))
         p = build_panels(df)

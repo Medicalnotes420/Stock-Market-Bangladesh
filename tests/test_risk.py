@@ -124,6 +124,13 @@ class Gate(unittest.TestCase):
         self.assertEqual(qty, 10)
 
 
+class DailyLoss(unittest.TestCase):
+    def test_threshold(self):
+        from dse_quant.risk import daily_loss_breached
+        self.assertTrue(daily_loss_breached(98.0, 100.0))
+        self.assertFalse(daily_loss_breached(98.1, 100.0))
+
+
 class Sizing(unittest.TestCase):
     def test_vol_target(self):
         # 0.5% of 1,000,000 = 5,000 risk; ATR 2.5 -> 2,000 shares

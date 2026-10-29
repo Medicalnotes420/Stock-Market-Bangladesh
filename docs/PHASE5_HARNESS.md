@@ -40,4 +40,8 @@ A strategy is stopped automatically, and an exit list is written, when any of th
 ## Open items
 - **No daily data source is approved.** Options: DSE day-end pages (personal use, no `/api`), StockNow with written consent, or a licensed vendor. Until then the harness can only replay history.
 - **Capital** is assumed to be Tk 1 crore.
-- **Audit findings still open:** 4 (fake losses on held positions at unexplained gaps), 6 (the daily-loss rule is written in two places), 7 (no tests for stops and regime branches), 8 (stale log in the repo root).
+- **Audit findings 4, 6, 7 and 8 are fixed:**
+  - **4:** gap days are now counted per trade and reported.
+  - **6:** one `risk.daily_loss_breached` is shared by the engine and RiskGate.
+  - **7:** stop, trailing, target and regime-branch tests added, and a mutation check showed they catch a flipped stop comparison.
+  - **8:** the stale log is deleted.

@@ -78,6 +78,11 @@ def check_order(order, pf, adtv20, sector, limits=LIMITS):
     return qty, reasons
 
 
+def daily_loss_breached(equity, day_start_equity, limits=LIMITS):
+    """The one daily-loss rule, used by RiskGate (paper) and the backtest engine."""
+    return 1 - equity / day_start_equity >= limits.max_daily_loss
+
+
 class RiskGate:
     """Decides once per day whether new entries are allowed. Exits are always allowed."""
 
@@ -85,11 +90,10 @@ class RiskGate:
                  has_index: bool, limits=LIMITS):
         self.pf, self.limits, self.reasons = pf, limits, []
         drawdown = 1 - pf.equity / pf.peak_equity
-        day_loss = 1 - pf.equity / pf.day_start_equity
         self.kill = drawdown >= limits.max_drawdown
         if self.kill:
             self.reasons.append("max_drawdown")
-        if day_loss >= limits.max_daily_loss:
+        if daily_loss_breached(pf.equity, pf.day_start_equity, limits):
             self.reasons.append("max_daily_loss")
         if latest_bar != expected:
             self.reasons.append("stale_data")

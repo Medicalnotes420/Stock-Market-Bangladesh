@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 from dse_quant.backtest.costs import cost_rate
-from dse_quant.risk import LIMITS, Order, Portfolio, check_order, size_position
+from dse_quant.risk import LIMITS, Order, Portfolio, check_order, daily_loss_breached, size_position
 
 
 @dataclass(frozen=True)
@@ -35,7 +35,7 @@ def run(p, strat, cfg, elig, regime=None):
     O, H, L, C = (x.values for x in (p.open, p.high, p.low, p.close))
     TP = (O + H + L + C) / 4
     has = ~np.isnan(C)
-    LL, UL = p.lower_lock.values, p.upper_lock.values
+    LL, UL, GAP = p.lower_lock.values, p.upper_lock.values, p.gap_flag.values
     ATR, ADTV, VOL = p.atr.values, p.adtv.values, p.vol.values
     E = elig.reindex(index=p.dates, columns=p.tickers).fillna(False).values.astype(bool)
     if cfg.gap_exclusion:
@@ -53,7 +53,9 @@ def run(p, strat, cfg, elig, regime=None):
 
     def close_out(t, j, proceeds, reason):
         trades.append({"ticker": p.tickers[j], "entry_date": p.dates[entry_t[j]], "exit_date": p.dates[t],
-                       "qty": qty[j], "pnl": proceeds - basis[j], "ret": proceeds / basis[j] - 1, "reason": reason})
+                       "qty": qty[j], "pnl": proceeds - basis[j], "ret": proceeds / basis[j] - 1, "reason": reason,
+                       # unexplained gaps while held: P&L may include an unadjusted corporate action
+                       "gap_days": int(GAP[entry_t[j] + 1:t + 1, j].sum())})
         qty[j], entry_t[j] = 0.0, -1
         pend_sell.discard(j)
 
@@ -91,7 +93,7 @@ def run(p, strat, cfg, elig, regime=None):
             break
 
         # 3. decisions at close t
-        allow = not (t > 0 and equity / eq_hist[t - 1] - 1 <= -LIMITS.max_daily_loss)
+        allow = not (t > 0 and daily_loss_breached(equity, eq_hist[t - 1]))
         r = reg[t] if reg is not None else "RISK_ON"
         held = np.flatnonzero(qty > 0)
         if r == "STRESS":
@@ -135,6 +137,7 @@ def run(p, strat, cfg, elig, regime=None):
                 names += 1
 
     idx = p.dates
-    tr = pd.DataFrame(trades, columns=["ticker", "entry_date", "exit_date", "qty", "pnl", "ret", "reason"])
+    tr = pd.DataFrame(trades, columns=["ticker", "entry_date", "exit_date", "qty", "pnl", "ret", "reason",
+                                       "gap_days"])
     return Result(pd.Series(eq_hist, idx), pd.Series(cash_hist, idx),
                   pd.DataFrame(pos_hist, idx, p.tickers), tr)

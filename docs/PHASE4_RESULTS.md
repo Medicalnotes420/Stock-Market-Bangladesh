@@ -69,6 +69,13 @@ Highest out-of-sample row: **C4, regime off, gap exclusion on**.
 
 It passes criteria 2 (positive at 1.5× costs) and 3 (neighbourhood). It fails 1 (Sharpe ≥ 0.5), 4 (deflated Sharpe), 5 (kill switch), 6 (floor periods) and 7 (held-out).
 
+### Trades held through an unexplained price gap (audit finding 4)
+Column `oos_trades_through_gap`: share of out-of-sample trades that held a stock through a day flagged as an unexplained gap. Their P&L may include a missed bonus or rights adjustment.
+- C1–C3: 1.0–2.2% of trades.
+- **C4: 8.3–14.3%**, because its long holds cross more gap days. So C4's results carry the most data noise in either direction.
+
+This was added by a later rerun (after audit fixes 4 and 6). Every previously reported column is identical to run 2.
+
 ## Conclusion
 **No strategy survives, under either cost model.**
 - The strongest candidate (C4 low-vol) roughly matches DSEX on risk-adjusted return: 0.35 vs 0.32, with a smaller drawdown (30% vs 43%).

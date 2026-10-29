@@ -70,8 +70,8 @@ def trades_in(keys_by_year, store_trades):
     pn = []
     for y, k in keys_by_year.items():
         t = store_trades[k]
-        pn.append(t[(t.exit_date >= f"{y}-01-01") & (t.exit_date <= f"{y}-12-31")].pnl)
-    return pd.concat(pn) if pn else pd.Series(dtype=float)
+        pn.append(t[(t.exit_date >= f"{y}-01-01") & (t.exit_date <= f"{y}-12-31")])
+    return pd.concat(pn)
 
 def ex_floor(r):
     keep = np.ones(len(r), bool)
@@ -93,7 +93,8 @@ for name, grid in GRIDS.items():
             chosen[y] = max(win, key=win.get)
         n = name
         oos, n_switch = wf(chosen, rets)
-        oos_tr = trade_stats(trades_in({y: (n, chosen[y], rg, gp) for y in OOS_YEARS}, runs))
+        oos_trades = trades_in({y: (n, chosen[y], rg, gp) for y in OOS_YEARS}, runs)
+        oos_tr = trade_stats(oos_trades.pnl)
         # cost sensitivity: rerun the selected parameter sets at higher cost
         cost_sh = {}
         for mult in (1.5, 2.0):
@@ -116,6 +117,7 @@ for name, grid in GRIDS.items():
             "oos_cagr": float((1 + oos).prod() ** (240 / len(oos)) - 1),
             "oos_trades": oos_tr["trades"], "oos_win_rate": oos_tr["win_rate"], "oos_pf": oos_tr["profit_factor"],
             "oos_sharpe_1_5x": cost_sh[1.5], "oos_sharpe_2x": cost_sh[2.0], "oos_switches": n_switch,
+            "oos_trades_through_gap": float((oos_trades.gap_days > 0).mean()) if len(oos_trades) else 0.0,
             "oos_kill_date": oos_kill.date() if oos_kill is not None else None,
             "held_kill_date": held_kill.date() if held_kill is not None else None,
             "neighbourhood_pos": float(np.mean([s > 0 for s in tr_sh.values()])),
@@ -151,7 +153,7 @@ reg_counts.to_csv(OUT / "phase4_regime_counts.csv")
      "runtime_s": round(time.time() - t0)}, indent=1))
 pd.set_option("display.width", 250)
 print(table[["strategy", "regime", "gap_excl", "oos_sharpe", "oos_mdd", "oos_trades", "oos_win_rate", "oos_pf",
-             "oos_sharpe_1_5x", "oos_sharpe_2x", "oos_switches", "oos_kill_date", "neighbourhood_pos", "dsr",
+             "oos_sharpe_1_5x", "oos_sharpe_2x", "oos_switches", "oos_trades_through_gap", "oos_kill_date", "neighbourhood_pos", "dsr",
              "oos_sharpe_ex_floor", "held_sharpe", "held_kill_date", "criteria_passed", "verdict"]].round(3).to_string())
 print(json.dumps({"benchmark_dsex": benchmark, "proxy_check": proxy_check, "n_trials": n_trials}, indent=1))
 log("done")
