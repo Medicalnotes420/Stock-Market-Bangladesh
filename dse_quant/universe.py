@@ -28,7 +28,8 @@ def eligible(prices, asof, types, rules=UniverseRules()):
     recent = h[h.date >= sessions[-rules.no_lower_lock_days]]
     w = window.groupby("ticker").agg(n=("date", "size"), med=("value", "median"))
     hist = h.groupby("ticker").date.size()
-    today = h[h.date == asof].set_index("ticker").close
+    # min price applies to the traded (raw) price; back-adjusted history understates it
+    today = h[h.date == asof].set_index("ticker")["close_raw" if "close_raw" in h else "close"]
     locked = set(recent.loc[recent.lower_lock.fillna(False).astype(bool), "ticker"])
     ok = (w.n >= rules.min_trade_frac * rules.lookback) & (w.med >= rules.min_median_value)
     keep = [t for t in w.index[ok]
