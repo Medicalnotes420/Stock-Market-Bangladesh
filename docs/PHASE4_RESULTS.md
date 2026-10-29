@@ -48,5 +48,31 @@ So the pre-registered verdict (all REJECT) stands as recorded. What it mostly pr
 - **C4** holds for about 6 months and trades about 14 times a year, so it is the only candidate whose edge (+6.7% mean trade before costs) is large next to realistic costs. Its worst trades are large single-stock drops: BRACBANK −43% in 2019–20, IFADAUTOS −30%.
 - **Held-out has now been opened once.** Any rerun can use it only to reject, never to rescue (pre-registration, criterion 7).
 
-## Open decision
-A corrected impact model can only be a **post-registration change made after seeing results**. It would be logged as such, and any survivor would carry that label.
+## Run 2: corrected cost model (POST-HOC, change 4)
+Code at fb870e2. Impact is now `σ_daily·√(order/ADTV)`; everything else is unchanged. Command and output paths are the same as run 1 (results/ now holds run 2; run 1 is in git at 21ed7f3).
+
+| Strategy | Edge | Timeframe | OOS Sharpe | OOS Max DD | OOS Trades | Sharpe at 1.5x / 2x cost | Kill switch fired (OOS) | Sharpe without floor periods | Held-out Sharpe | Verdict |
+|---|---|---|---|---|---|---|---|---|---|---|
+| C1 Momentum | slow diffusion | 1–3 months | −0.27 … 0.26 | 10% … 42% | 60 … 275 | −0.45…0.03 / −0.62…−0.19 | 2 of 4 settings | −0.32 … 0.05 | −1.09 … −0.58 | REJECT (4/4) |
+| C2 Breakout | new information on a value surge | 2–6 weeks | −0.44 … 0.19 | 21% … 46% | 212 … 304 | −0.69…−0.02 / −0.92…−0.23 | 4 of 4 | −0.61 … 0.05 | −0.70 … −0.64 | REJECT (4/4) |
+| C3 Reversal | panic overshoot | 3–10 sessions | −1.18 … −1.05 | 13% … 48% | 96 … 389 | −1.64…−1.34 / −2.05…−1.53 | 2 of 4 | −1.36 … −1.00 | −1.14 … −0.91 | REJECT (4/4) |
+| C4 Low-vol | retail lottery preference | quarterly | 0.11 … 0.35 | 24% … 32% | 21 … 80 | 0.04…0.29 / −0.02…0.18 | 4 of 4 | −0.28 … −0.08 | −0.59 … −0.05 | REJECT (4/4) |
+| C5 Dividend drift | underreaction | weeks | not run | not run | not run | not run | — | — | — | not run (no data) |
+| DSEX buy-and-hold | — | — | 0.32 | 43% | — | — | — | — | −0.38 | benchmark |
+
+Highest out-of-sample row: **C4, regime off, gap exclusion on**.
+- Sharpe 0.35, max drawdown 30%, 80 trades, profit factor 1.97.
+- Sharpe at 1.5× cost 0.29, at 2× cost 0.18.
+- Deflated Sharpe probability 0.05.
+- The kill switch would have fired on 2019-05-12.
+- **Without the floor-price periods its Sharpe is −0.14.** Held-out: −0.07.
+
+It passes criteria 2 (positive at 1.5× costs) and 3 (neighbourhood). It fails 1 (Sharpe ≥ 0.5), 4 (deflated Sharpe), 5 (kill switch), 6 (floor periods) and 7 (held-out).
+
+## Conclusion
+**No strategy survives, under either cost model.**
+- The strongest candidate (C4 low-vol) roughly matches DSEX on risk-adjusted return: 0.35 vs 0.32, with a smaller drawdown (30% vs 43%).
+- Its positive results come from the regulator floor-price periods, when falling prices were blocked by rule.
+- It is negative held-out and in the rest of the history.
+- The regime filter mostly keeps the strategies in cash (RISK_ON: 0 days in 2023–24). It does not rescue anything.
+- None of these strategies goes into paper trading as a candidate.

@@ -1,6 +1,6 @@
 {
  "n_trials": 132,
- "sr_var_per_period": 0.0040366112616621805,
+ "sr_var_per_period": 0.0006430520751044584,
  "proxy_check": {
   "overlap_days": 2597,
   "corr_daily": 0.885,
@@ -12,5 +12,5 @@
   "held_sharpe": -0.377340250479173,
   "held_mdd": 0.2816416989657887
  },
- "runtime_s": 191
+ "runtime_s": 201
 }

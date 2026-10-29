@@ -1,30 +1,30 @@
-[     9s] panels built
-[     9s] regime done {'overlap_days': 2597, 'corr_daily': 0.885, 'dsex_missing_filled': 340}
-[    27s] C1 grid done
-[    60s] C2 grid done
-[    86s] C3 grid done
-[   101s] C4 grid done
-[   119s] C1 walk-forward done
-[   151s] C2 walk-forward done
-[   172s] C3 walk-forward done
-[   191s] C4 walk-forward done
-   strategy  regime  gap_excl  oos_sharpe  oos_mdd  oos_trades  oos_win_rate  oos_pf  oos_sharpe_1_5x  oos_sharpe_2x  oos_switches oos_kill_date  neighbourhood_pos  dsr  oos_sharpe_ex_floor  held_sharpe held_kill_date criteria_passed verdict
-0        C1    True      True      -1.227    0.289          60         0.250   0.525           -1.522         -1.697             5    2018-09-24                0.0  0.0               -1.224       -1.526     2025-07-24         nnnnnnn  REJECT
-1        C1    True     False      -0.984    0.247          61         0.246   0.561           -1.290         -1.478             4    2018-09-24                0.0  0.0               -1.079       -1.457     2025-07-24         nnnnnnn  REJECT
-2        C1   False      True      -1.103    0.725         309         0.278   0.508           -1.369         -1.560             3    2017-05-14                0.0  0.0               -1.297       -1.608     2023-09-14         nnnnnnn  REJECT
-3        C1   False     False      -1.094    0.666         298         0.262   0.534           -1.370         -1.564             4    2017-04-25                0.0  0.0               -1.341       -1.440     2023-09-14         nnnnnnn  REJECT
-4        C2    True      True      -0.913    0.573         184         0.228   0.532           -1.360         -1.661             2    2017-04-23                0.0  0.0               -1.217       -1.225     2025-09-09         nnnnnnn  REJECT
-5        C2    True     False      -0.986    0.583         195         0.241   0.537           -1.412         -1.701             3    2017-04-20                0.0  0.0               -1.257       -1.218     2025-09-09         nnnnnnn  REJECT
-6        C2   False      True      -1.719    0.851         332         0.238   0.378           -2.085         -2.307             5    2017-03-22                0.0  0.0               -2.016       -1.375     2023-08-14         nnnnnnn  REJECT
-7        C2   False     False      -1.441    0.818         337         0.231   0.474           -1.780         -2.008             5    2017-03-20                0.0  0.0               -1.954       -1.796     2023-07-25         nnnnnnn  REJECT
-8        C3    True      True      -2.032    0.198          66         0.227   0.109           -2.429         -2.646             2    2021-10-18                0.0  0.0               -1.910       -1.947           None         nnnnnnn  REJECT
-9        C3    True     False      -2.097    0.211          70         0.229   0.107           -2.495         -2.708             2    2021-09-16                0.0  0.0               -2.037       -1.914           None         nnnnnnn  REJECT
-10       C3   False      True      -2.858    0.801         316         0.241   0.118           -3.290         -3.595             3    2017-05-08                0.0  0.0               -3.173       -2.261     2024-02-25         nnnnnnn  REJECT
-11       C3   False     False      -2.756    0.800         333         0.255   0.135           -3.231         -3.521             3    2017-04-25                0.0  0.0               -3.087       -2.267     2024-02-22         nnnnnnn  REJECT
-12       C4    True      True      -0.422    0.321          22         0.182   0.535           -0.629         -0.619             3    2018-05-28                0.0  0.0               -0.779       -1.028     2024-06-10         nnnnnnn  REJECT
-13       C4    True     False      -0.424    0.316          22         0.182   0.523           -0.624         -0.618             3    2018-05-29                0.0  0.0               -0.783       -1.031     2024-06-10         nnnnnnn  REJECT
-14       C4   False      True      -0.461    0.511          51         0.157   0.466           -0.487         -0.493             3    2018-05-31                0.0  0.0               -1.096       -0.696     2023-02-07         nnnnnnn  REJECT
-15       C4   False     False      -0.448    0.514          49         0.163   0.459           -0.487         -0.493             3    2018-05-31                0.0  0.0               -1.082       -0.696     2023-02-07         nnnnnnn  REJECT
+[    23s] panels built
+[    23s] regime done {'overlap_days': 2597, 'corr_daily': 0.885, 'dsex_missing_filled': 340}
+[    48s] C1 grid done
+[    86s] C2 grid done
+[   113s] C3 grid done
+[   128s] C4 grid done
+[   139s] C1 walk-forward done
+[   168s] C2 walk-forward done
+[   187s] C3 walk-forward done
+[   200s] C4 walk-forward done
+   strategy  regime  gap_excl  oos_sharpe  oos_mdd  oos_trades  oos_win_rate  oos_pf  oos_sharpe_1_5x  oos_sharpe_2x  oos_switches oos_kill_date  neighbourhood_pos    dsr  oos_sharpe_ex_floor  held_sharpe held_kill_date criteria_passed verdict
+0        C1    True      True      -0.272    0.135          71         0.282   0.963           -0.453         -0.615             3          None              0.333  0.001               -0.321       -0.666           None         nnnnYnn  REJECT
+1        C1    True     False      -0.066    0.096          60         0.300   1.143           -0.253         -0.421             3          None              0.333  0.004               -0.123       -0.583           None         nnnnYnn  REJECT
+2        C1   False      True      -0.039    0.418         275         0.353   1.011           -0.270         -0.484             1    2017-10-02              0.000  0.005               -0.139       -1.092     2023-09-18         nnnnnnn  REJECT
+3        C1   False     False       0.258    0.297         225         0.347   1.191            0.027         -0.187             1    2017-09-27              0.000  0.030                0.051       -0.848     2023-09-14         nYnnnYn  REJECT
+4        C2    True      True       0.186    0.205         225         0.373   1.185           -0.022         -0.232             3    2018-04-22              0.444  0.020                0.006       -0.637           None         nnnnnYn  REJECT
+5        C2    True     False       0.172    0.213         212         0.349   1.170           -0.051         -0.226             3    2017-07-20              0.778  0.018                0.049       -0.636           None         nnYnnYn  REJECT
+6        C2   False      True      -0.443    0.461         304         0.326   0.792           -0.688         -0.917             4    2017-04-30              0.000  0.000               -0.605       -0.685     2024-02-12         nnnnnnn  REJECT
+7        C2   False     False      -0.084    0.435         293         0.321   0.981           -0.285         -0.499             4    2017-10-18              0.111  0.003               -0.393       -0.703     2023-12-17         nnnnnnn  REJECT
+8        C3    True      True      -1.090    0.127          96         0.354   0.407           -1.343         -1.531             2          None              0.000  0.000               -1.001       -0.935           None         nnnnYnn  REJECT
+9        C3    True     False      -1.122    0.133         100         0.350   0.406           -1.379         -1.572             2          None              0.000  0.000               -1.052       -0.906           None         nnnnYnn  REJECT
+10       C3   False      True      -1.052    0.440         369         0.401   0.555           -1.503         -1.968             2    2017-10-15              0.000  0.000               -1.226       -1.048     2024-06-10         nnnnnnn  REJECT
+11       C3   False     False      -1.183    0.480         389         0.383   0.527           -1.638         -2.049             2    2017-10-15              0.000  0.000               -1.363       -1.139     2024-05-29         nnnnnnn  REJECT
+12       C4    True      True       0.110    0.250          21         0.381   1.180            0.044         -0.021             3    2019-09-02              0.833  0.012               -0.237       -0.591     2025-01-07         nYYnnnn  REJECT
+13       C4    True     False       0.235    0.243          24         0.458   1.044            0.161          0.087             3    2019-09-04              0.833  0.026               -0.079       -0.591     2025-01-07         nYYnnnn  REJECT
+14       C4   False      True       0.353    0.303          80         0.425   1.965            0.285          0.175             2    2019-05-12              0.667  0.047               -0.135       -0.065     2024-03-18         nYYnnnn  REJECT
+15       C4   False     False       0.214    0.315          77         0.390   1.548            0.187          0.107             4    2019-04-28              0.667  0.023               -0.279       -0.050     2024-03-18         nYYnnnn  REJECT
 {
  "benchmark_dsex": {
   "oos_sharpe": 0.31620631253999015,
@@ -39,4 +39,4 @@
  },
  "n_trials": 132
 }
-[   191s] done
+[   201s] done
