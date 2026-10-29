@@ -28,7 +28,6 @@ def load_state(path):
 
 def daily_run(prices, market, types, asof, state_path, journal_path, orders_dir, strategy=None):
     asof = pd.Timestamp(asof)
-    state = load_state(state_path)
     entry = {"run_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "asof": str(asof.date()),
              "strategy": strategy or "none", "alerts": [], "orders": [], "exit_list": [], "regime": "UNKNOWN"}
     status, last_close, adtv = None, {}, {}
@@ -50,22 +49,32 @@ def daily_run(prices, market, types, asof, state_path, journal_path, orders_dir,
     except Exception as e:  # corrupt or missing input: journal it, trade nothing
         entry["alerts"].append(f"input error: {type(e).__name__}: {e}")
 
-    pos = {t: q for t, q in state["positions"].items() if q > 0}
-    prices_now = {t: last_close.get(t, 0.0) for t in pos}
-    equity = state["cash"] + sum(q * prices_now[t] for t, q in pos.items())
-    pf = Portfolio(equity=equity, peak_equity=max(state["peak_equity"], equity),
-                   day_start_equity=state["day_start_equity"], positions=pos, prices=prices_now)
-    if status is None:
-        entry.update(gate_open=False, gate_reasons=["input_error"], kill=False)
-    else:
-        gate = RiskGate(pf, **status)
-        entry.update(gate_open=gate.allow_new_entries, gate_reasons=gate.reasons, kill=gate.kill)
-        if gate.kill:
-            entry["exit_list"] = exit_list(pf, adtv)
-    if entry["regime"] == "STRESS" and pos:
-        entry["exit_list"] = entry["exit_list"] or exit_list(pf, adtv)
-    # no strategy enabled: nothing passed Phase 4, so orders stay empty by construction
-    entry["equity"] = equity
+    state_ok = False
+    try:
+        state = load_state(state_path)
+        pos = {t: q for t, q in state["positions"].items() if q > 0}
+        prices_now = {t: last_close.get(t, 0.0) for t in pos}
+        equity = state["cash"] + sum(q * prices_now[t] for t, q in pos.items())
+        pf = Portfolio(equity=equity, peak_equity=max(state["peak_equity"], equity),
+                       day_start_equity=state["day_start_equity"], positions=pos, prices=prices_now)
+        if status is None:
+            entry.update(gate_open=False, gate_reasons=["input_error"], kill=False)
+        else:
+            gate = RiskGate(pf, **status)
+            entry.update(gate_open=gate.allow_new_entries, gate_reasons=gate.reasons, kill=gate.kill)
+            if gate.kill:
+                entry["exit_list"] = exit_list(pf, adtv)
+        if entry["regime"] == "STRESS" and pos:
+            entry["exit_list"] = entry["exit_list"] or exit_list(pf, adtv)
+        # no strategy enabled: nothing passed Phase 4, so orders stay empty by construction
+        entry["equity"] = equity
+        state_ok = True
+    except Exception as e:  # corrupt or impossible state (e.g. zero equity): journal it, trade nothing
+        entry["alerts"].append(f"state error: {type(e).__name__}: {e}")
+        entry["gate_open"] = False
+        entry.setdefault("gate_reasons", []).append("state_error")
+        entry.setdefault("kill", False)
+        entry.setdefault("equity", None)
 
     Path(orders_dir).mkdir(parents=True, exist_ok=True)
     with open(Path(orders_dir) / f"orders_{asof.date()}.csv", "w", newline="") as f:
@@ -77,6 +86,7 @@ def daily_run(prices, market, types, asof, state_path, journal_path, orders_dir,
     with open(journal_path, "a") as f:
         f.write(json.dumps(entry, default=str) + "\n")
 
-    state.update(peak_equity=pf.peak_equity, day_start_equity=equity)
-    Path(state_path).write_text(json.dumps(state))
+    if state_ok:  # never overwrite a state file we could not use; it stays for inspection
+        state.update(peak_equity=pf.peak_equity, day_start_equity=equity)
+        Path(state_path).write_text(json.dumps(state))
     return entry

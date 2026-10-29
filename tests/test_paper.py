@@ -73,6 +73,23 @@ class Harness(unittest.TestCase):
         self.assertEqual({r["ticker"] for r in e["exit_list"]}, {"T1", "T2"})
         self.assertFalse(e["gate_open"])
 
+    def check_bad_state(self, text):
+        self.paths["state_path"].write_text(text)
+        e = daily_run(self.df, self.m, TYPES, self.last, **self.paths)   # must not raise
+        self.assertFalse(e["gate_open"])
+        self.assertIn("state_error", e["gate_reasons"])
+        self.assertTrue(any("state error" in a for a in e["alerts"]))
+        self.assertEqual(len(self.journal()), 1)
+        self.assertEqual(self.paths["state_path"].read_text(), text)       # left as found, for inspection
+        s = summarize(self.paths["journal_path"])                          # monitor copes with no equity
+        self.assertEqual(s["runs"], 1)
+
+    def test_zero_equity_state_never_skips_journal(self):
+        self.check_bad_state(json.dumps({"cash": 0, "peak_equity": 0, "day_start_equity": 0, "positions": {}}))
+
+    def test_corrupt_state_file_never_skips_journal(self):
+        self.check_bad_state("{not json")
+
     def test_journal_is_append_only_and_state_persists(self):
         daily_run(self.df, self.m, TYPES, self.df.date.unique()[-2], **self.paths)
         daily_run(self.df, self.m, TYPES, self.last, **self.paths)

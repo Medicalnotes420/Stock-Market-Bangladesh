@@ -8,7 +8,7 @@ STALE_ALERT_DAYS = 3
 
 def summarize(journal_path):
     rows = [json.loads(l) for l in Path(journal_path).read_text().splitlines() if l.strip()]
-    eq = [r.get("equity", 0.0) for r in rows]
+    eq = [r["equity"] for r in rows if r.get("equity") is not None]  # state-error runs log no equity
     peak, mdd = 0.0, 0.0
     for e in eq:
         peak = max(peak, e)
