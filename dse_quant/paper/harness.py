@@ -58,6 +58,8 @@ def daily_run(prices, market, types, asof, state_path, journal_path, orders_dir,
         if p.dates[-1] == asof:
             m, above, lock_frac = regime_inputs(p, elig, types, market)
             entry["regime"] = str(classify(m, above, lock_frac).iloc[-1])
+            if pd.isna(market["n"].get(asof)):  # DSE market-summary day: breadth is unknown, so no RISK_ON
+                entry["regime"] += " (no breadth data)"
         entry["data_status"] = {k: str(v) for k, v in status.items()}
         for t in watch:
             if t in p.close.columns and p.close_raw[t].notna().any():

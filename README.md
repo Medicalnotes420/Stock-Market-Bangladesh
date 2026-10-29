@@ -10,6 +10,8 @@ pip install -r requirements.txt
 ```
 Raw data (CC BY 4.0, Mendeley) goes in `data/raw/` and is not in git; see docs/PHASE3_DATA.md for the two dataset DOIs and exact paths.
 
+Newer days come from copies of DSE's Data Archive (personal use) in `data/raw/dse/`: `dayend_<CODE>_<from>_<to>.csv` per watched stock and `market_summary_<from>_<to>.csv`. Rerun `build_clean.py` after adding files. These days carry no market breadth, so the regime shows "(no breadth data)" and the gate stays closed for `missing_data`.
+
 ## Run, in this order
 ```
 python -m unittest discover -s tests -t .   # all tests

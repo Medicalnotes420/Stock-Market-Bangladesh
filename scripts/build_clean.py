@@ -1,4 +1,5 @@
-"""Build data/clean/ from the raw Mendeley files. Run from the repo root: python scripts/build_clean.py"""
+"""Build data/clean/ from the raw Mendeley files, plus any DSE day-end/market-summary copies in data/raw/dse/.
+Run from the repo root: python scripts/build_clean.py"""
 import json
 import re
 import sys
@@ -9,7 +10,8 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dse_quant.data.adjust import apply_actions, infer_actions  # noqa: E402
 from dse_quant.data.checks import INDEX, ohlc_bad, unexplained_gaps  # noqa: E402
-from dse_quant.data.load import load_a1, load_a2, load_a2_types, repair_a1_dates  # noqa: E402
+from dse_quant.data.load import (load_a1, load_a2, load_a2_types, load_dse_market, load_dse_prices,  # noqa: E402
+                                 repair_a1_dates)
 from dse_quant.limits import lock_flags  # noqa: E402
 from dse_quant.universe import eligible  # noqa: E402
 
@@ -30,6 +32,19 @@ dead_types = {t: ("Unknown" if NON_EQUITY.search(t) else "Equity") for t in sort
 rep["dead_tickers_from_a1"] = dead_types
 types = {**dead_types, **types}
 prices = pd.concat([raw.assign(source="a2"), dead.assign(source="a1")], ignore_index=True)
+
+# newer days copied from dse.com.bd (only the watched stocks + market summary): appended after A2 ends
+dse, dse_m = load_dse_prices(), load_dse_market()
+a2_end = raw.date.max()
+ov = dse.merge(raw, on=["ticker", "date"], suffixes=("", "_a2"))
+rep["dse_vs_a2_overlap"] = {"rows": len(ov), "close_diff_gt_0.5pct": round(float(((ov.close / ov.close_a2 - 1).abs() > .005).mean()), 4) if len(ov) else None}
+new_m = dse_m[dse_m.index > a2_end]
+idx = pd.DataFrame({"date": new_m.index, "ticker": INDEX, "open": new_m.dsex.values, "high": new_m.dsex.values,
+                    "low": new_m.dsex.values, "close": new_m.dsex.values, "volume": 0.0, "value": 0.0})
+new = pd.concat([dse[dse.date > a2_end], idx], ignore_index=True).assign(source="dse")
+rep["dse_rows_added"] = {"rows": len(new), "tickers": sorted(new.ticker.unique()),
+                         "dates": [str(new.date.min().date()), str(new.date.max().date())] if len(new) else None}
+prices = pd.concat([prices, new], ignore_index=True)
 
 bad = ohlc_bad(prices)
 rep["quarantined_ohlc_rows"] = int(bad.sum())
@@ -57,6 +72,8 @@ market = pd.DataFrame({
     "dec": eq[eq.ret < 0].groupby("date").size(),
     "n": eq.groupby("date").size(),
 }).fillna({"adv": 0, "dec": 0}).sort_index()
+# on DSE-summary days we hold only a few stocks: use DSE's own turnover, and mark breadth as unknown
+market.loc[new_m.index, ["turnover", "adv", "dec", "n"]] = new_m[["turnover", "adv", "dec", "n"]].values
 
 years = {}
 for y, d in market.groupby(market.index.year).tail(1).index.to_series().items():

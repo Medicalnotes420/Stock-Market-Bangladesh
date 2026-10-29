@@ -52,6 +52,12 @@ class Harness(unittest.TestCase):
         self.assertTrue((self.tmp / "orders" / f"orders_{self.last.date()}.csv").exists())
         self.assertIn("inputs_hash", e)
 
+    def test_regime_labelled_when_breadth_unknown(self):
+        m = self.m.copy()
+        m.loc[self.last, ["adv", "dec", "n"]] = float("nan")   # only DSE's market summary for this day
+        e = daily_run(self.df, m, TYPES, self.last, **self.paths)
+        self.assertTrue(e["regime"].endswith("(no breadth data)"))
+
     def test_stale_data_blocks_and_alerts(self):
         e = daily_run(self.df, self.m, TYPES, self.last + pd.offsets.BDay(3), **self.paths)
         self.assertFalse(e["gate_open"])

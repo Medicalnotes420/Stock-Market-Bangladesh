@@ -51,5 +51,37 @@ class RepairA1(unittest.TestCase):
         self.assertEqual(set(out.ticker), {"A", "B", "C"})
 
 
+class DseFiles(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        self.dir = Path(tempfile.mkdtemp())
+        (self.dir / "dayend_X_a.csv").write_text(
+            "date,ticker,ltp,high,low,open,close,ycp,trades,value_mn,volume\n"
+            "2026-10-29,X,10.1,10.5,9.9,10,10.2,10,50,1.5,150000\n"
+            "2026-10-28,X,0,0,0,0,10,10,0,0,0\n"                 # no trades: DSE repeats YCP, not a bar
+            "2026-10-27,X,10,10.2,9.8,9.9,10,9.9,40,1.0,100000\n")
+        (self.dir / "dayend_X_b.csv").write_text(                 # overlapping second download
+            "date,ticker,ltp,high,low,open,close,ycp,trades,value_mn,volume\n"
+            "2026-10-29,X,10.1,10.5,9.9,10,10.2,10,50,1.5,150000\n")
+        (self.dir / "market_summary_a.csv").write_text(
+            "date,dsex,dsex_change,ds30,total_trades,total_value_mn,total_volume,market_cap_mn\n"
+            "2026-10-29,5417.4,-15.8,2086.9,156936,5646.211,274456304,6744762.8\n")
+
+    def test_prices_normalised_deduped_no_trade_days_dropped(self):
+        from dse_quant.data.load import COLS, load_dse_prices
+        d = load_dse_prices(self.dir)
+        self.assertEqual(list(d.columns), COLS)
+        self.assertEqual([str(x.date()) for x in d.date], ["2026-10-27", "2026-10-29"])
+        self.assertAlmostEqual(d.value.iloc[-1], 1.5e6)               # DSE's own traded value, in Tk
+
+    def test_market_turnover_in_taka_breadth_unknown(self):
+        from dse_quant.data.load import load_dse_market
+        m = load_dse_market(self.dir)
+        self.assertAlmostEqual(m.loc[pd.Timestamp("2026-10-29"), "turnover"], 5646.211e6)
+        self.assertAlmostEqual(m.loc[pd.Timestamp("2026-10-29"), "dsex"], 5417.4)
+        self.assertTrue(m[["adv", "dec", "n"]].isna().all().all())
+
+
 if __name__ == "__main__":
     unittest.main()
