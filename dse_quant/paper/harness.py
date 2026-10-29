@@ -52,11 +52,16 @@ def daily_run(prices, market, types, asof, state_path, journal_path, orders_dir,
     state_ok = False
     try:
         state = load_state(state_path)
+        last = state.get("asof")
+        if last and asof < pd.Timestamp(last):
+            raise ValueError(f"asof {asof.date()} is before the last run {last}; use a fresh state file to replay")
+        # baseline = equity at the previous day's close; a rerun of the same day keeps that day's baseline
+        day_start = state["day_start_equity"] if last == str(asof.date()) else state.get("equity", state["day_start_equity"])
         pos = {t: q for t, q in state["positions"].items() if q > 0}
         prices_now = {t: last_close.get(t, 0.0) for t in pos}
         equity = state["cash"] + sum(q * prices_now[t] for t, q in pos.items())
         pf = Portfolio(equity=equity, peak_equity=max(state["peak_equity"], equity),
-                       day_start_equity=state["day_start_equity"], positions=pos, prices=prices_now)
+                       day_start_equity=day_start, positions=pos, prices=prices_now)
         if status is None:
             entry.update(gate_open=False, gate_reasons=["input_error"], kill=False)
         else:
@@ -86,7 +91,8 @@ def daily_run(prices, market, types, asof, state_path, journal_path, orders_dir,
     with open(journal_path, "a") as f:
         f.write(json.dumps(entry, default=str) + "\n")
 
-    if state_ok:  # never overwrite a state file we could not use; it stays for inspection
-        state.update(peak_equity=pf.peak_equity, day_start_equity=equity)
+    # never overwrite a state file we could not use, or save equity valued without prices
+    if state_ok and status is not None:
+        state.update(asof=str(asof.date()), equity=equity, day_start_equity=day_start, peak_equity=pf.peak_equity)
         Path(state_path).write_text(json.dumps(state))
     return entry

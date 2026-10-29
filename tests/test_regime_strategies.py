@@ -5,7 +5,7 @@ import pandas as pd
 
 from dse_quant.limits import lock_flags
 from dse_quant.panels import build_panels
-from dse_quant.regime import classify, proxy_returns
+from dse_quant.regime import classify, fill_index, proxy_returns
 from dse_quant.strategies import GRIDS, make
 from tests.helpers import bars
 
@@ -45,6 +45,11 @@ class Regime(unittest.TestCase):
         full = classify(m, a, z)
         cut = classify(m.iloc[:300], a.iloc[:300], z.iloc[:300])
         pd.testing.assert_series_equal(full.iloc[:300], cut)
+
+    def test_fill_index_chains_proxy_only_on_missing_days(self):
+        nan = float("nan")
+        out = fill_index(pd.Series([100.0, nan, nan, 110.0]), pd.Series([nan, 0.01, -0.02, 0.5]))
+        self.assertEqual(out.round(4).tolist(), [100.0, 101.0, 98.98, 110.0])
 
     def test_proxy_is_median_return(self):
         df = pd.concat([bars("A", [10, 11]), bars("B", [10, 10]), bars("C", [10, 9])])

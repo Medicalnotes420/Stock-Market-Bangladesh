@@ -1,7 +1,7 @@
 """Daily paper run. Run from the repo root after the DSE close:
   python scripts/paper_run.py                  # as of today
   python scripts/paper_run.py --asof 2026-01-22
-  python scripts/paper_run.py --replay 10      # last 10 sessions in the data, oldest first
+  python scripts/paper_run.py --replay 10      # last 10 sessions, oldest first (needs a fresh data/paper/)
 State, journal and order files go to data/paper/ (git-ignored). Prints the monitoring summary."""
 import argparse
 import json

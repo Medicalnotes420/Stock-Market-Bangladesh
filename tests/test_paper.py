@@ -90,6 +90,29 @@ class Harness(unittest.TestCase):
     def test_corrupt_state_file_never_skips_journal(self):
         self.check_bad_state("{not json")
 
+    def test_rerun_same_day_keeps_daily_loss_baseline(self):
+        prev = str(self.df.date.unique()[-2].date())
+        self.paths["state_path"].write_text(json.dumps(
+            {"asof": prev, "equity": 1e7, "day_start_equity": 1e7, "cash": 9.7e6, "peak_equity": 1e7, "positions": {}}))
+        for _ in range(2):  # -3% vs yesterday's close, on both runs
+            e = daily_run(self.df, self.m, TYPES, self.last, **self.paths)
+            self.assertIn("max_daily_loss", e["gate_reasons"])
+
+    def test_input_error_day_does_not_move_state(self):
+        text = json.dumps({"asof": "2020-01-01", "equity": 1e7, "day_start_equity": 1e7, "cash": 1e6,
+                           "peak_equity": 1e7, "positions": {"T1": 1000}})
+        self.paths["state_path"].write_text(text)
+        daily_run(self.df.drop(columns=["close"]), self.m, TYPES, self.last, **self.paths)
+        self.assertEqual(self.paths["state_path"].read_text(), text)
+
+    def test_run_older_than_last_is_refused(self):
+        text = json.dumps({"asof": str(self.last.date()), "equity": 1e7, "day_start_equity": 1e7, "cash": 1e7,
+                           "peak_equity": 1e7, "positions": {}})
+        self.paths["state_path"].write_text(text)
+        e = daily_run(self.df, self.m, TYPES, self.df.date.unique()[-5], **self.paths)
+        self.assertIn("state_error", e["gate_reasons"])
+        self.assertEqual(self.paths["state_path"].read_text(), text)
+
     def test_journal_is_append_only_and_state_persists(self):
         daily_run(self.df, self.m, TYPES, self.df.date.unique()[-2], **self.paths)
         daily_run(self.df, self.m, TYPES, self.last, **self.paths)
