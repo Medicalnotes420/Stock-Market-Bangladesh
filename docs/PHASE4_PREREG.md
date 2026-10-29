@@ -51,4 +51,7 @@ Verdicts:
 - **REJECT**: anything else.
 
 ## Changes after registration
-(none yet)
+All three changes come from a code audit on 2026-10-29. An earlier run completed using the old rules, but its output was **not opened**, and the rerun overwrites it.
+1. **Criterion 5:** "out-of-sample max drawdown ≤ 25%" becomes "the 15% drawdown kill switch never fires out-of-sample". The 25% bar let through strategies that the live system (risk.py, spec §6) would have shut down. This is stricter.
+2. **Walk-forward switching cost:** when the chosen parameter set changes between years, the first day of the new year pays a full rotation, 2 × (0.47% + 0.10%) × cost multiplier. Previously this was free. Stricter.
+3. **Impact cost capped at 10% per side:** previously uncapped, which allowed a sale to cost more than 100%. Less strict for very illiquid exits only.

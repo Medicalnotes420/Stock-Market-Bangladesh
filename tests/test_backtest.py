@@ -6,7 +6,8 @@ import pandas as pd
 
 from dse_quant.backtest.costs import cost_rate
 from dse_quant.backtest.engine import Config, run
-from dse_quant.backtest.metrics import deflated_sharpe, max_drawdown, sharpe, trade_stats
+from dse_quant.backtest.metrics import deflated_sharpe, first_breach, max_drawdown, sharpe, trade_stats
+from dse_quant.backtest.walkforward import stitch, switch_cost
 from dse_quant.limits import lock_flags
 from dse_quant.panels import build_panels, eligible_mask
 from dse_quant.universe import UniverseRules, eligible
@@ -25,6 +26,11 @@ class Costs(unittest.TestCase):
     def test_impact_scales_with_sqrt(self):
         self.assertAlmostEqual(cost_rate(4e4, 1e6), 0.0047 + 0.5 * math.sqrt(0.04))
 
+    def test_impact_capped_so_a_sale_never_costs_more_than_it_raises(self):
+        self.assertAlmostEqual(cost_rate(1e6, 5e4), 0.0047 + 0.10)       # 20x ADTV
+        self.assertAlmostEqual(cost_rate(1e6, 0), 0.0047 + 0.10)         # no turnover after a suspension
+        self.assertLess(cost_rate(1e9, 1, mult=2.0), 1.0)
+
     def test_multiplier(self):
         self.assertAlmostEqual(cost_rate(1_000, 1e12, mult=2), 2 * (0.0047 + 0.001))
 
@@ -36,6 +42,11 @@ class Metrics(unittest.TestCase):
 
     def test_max_drawdown(self):
         self.assertAlmostEqual(max_drawdown(pd.Series([100, 120, 90, 130, 65])), 0.5)
+
+    def test_first_breach_of_kill_level(self):
+        eq = pd.Series([100, 110, 95, 93, 120, 90], index=pd.bdate_range("2020-01-01", periods=6))
+        self.assertEqual(first_breach(eq, 0.15), eq.index[3])     # 93/110 = -15.45%
+        self.assertIsNone(first_breach(eq, 0.30))
 
     def test_trade_stats(self):
         s = trade_stats(pd.Series([10.0, -5.0, 20.0, -5.0]))
@@ -49,6 +60,27 @@ class Metrics(unittest.TestCase):
         self.assertLess(deflated_sharpe(noise, n_trials=132, sr_var=0.02 ** 2), 0.5)
         self.assertLess(deflated_sharpe(strong, n_trials=132, sr_var=0.05 ** 2),
                         deflated_sharpe(strong, n_trials=1, sr_var=0.0))
+
+
+class WalkForward(unittest.TestCase):
+    def setUp(self):
+        self.yr = {y: pd.Series([0.01, 0.01], index=pd.to_datetime([f"{y}-01-02", f"{y}-01-03"]))
+                   for y in (2017, 2018)}
+
+    def test_switch_charged_on_first_day_of_new_year(self):
+        out, n = stitch(self.yr, {2017: 0, 2018: 1}, cost=0.02)
+        self.assertEqual(n, 1)
+        self.assertAlmostEqual(out.iloc[2], 1.01 * 0.98 - 1)
+        self.assertEqual(out.iloc[0], 0.01)
+        self.assertEqual(out.iloc[3], 0.01)
+
+    def test_same_choice_costs_nothing(self):
+        out, n = stitch(self.yr, {2017: 0, 2018: 0}, cost=0.02)
+        self.assertEqual(n, 0)
+        self.assertTrue((out == 0.01).all())
+
+    def test_switch_cost_scales(self):
+        self.assertAlmostEqual(switch_cost(1.5), 2 * 1.5 * (0.0047 + 0.001))
 
 
 class PanelUniverseMatchesReference(unittest.TestCase):

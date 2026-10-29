@@ -19,6 +19,13 @@ def max_drawdown(equity):
     return float((1 - e / e.cummax()).max())
 
 
+def first_breach(equity, level):
+    """First date the drawdown from peak reaches `level` (the live kill switch), or None."""
+    e = pd.Series(equity).dropna()
+    hit = (1 - e / e.cummax()) >= level
+    return hit.idxmax() if hit.any() else None
+
+
 def trade_stats(pnl):
     pnl = pd.Series(pnl).dropna()
     wins, losses = pnl[pnl > 0].sum(), -pnl[pnl < 0].sum()
