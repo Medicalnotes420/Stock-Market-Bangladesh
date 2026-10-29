@@ -2,7 +2,7 @@
   python scripts/paper_run.py                  # as of today
   python scripts/paper_run.py --asof 2026-01-22
   python scripts/paper_run.py --replay 10      # last 10 sessions, oldest first (needs a fresh data/paper/)
-State, journal and order files go to data/paper/ (git-ignored). Prints the monitoring summary."""
+State, journal, order files and status.html go to data/paper/ (git-ignored). Prints the monitoring summary."""
 import argparse
 import json
 import sys
@@ -14,7 +14,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dse_quant.data.load import load_a2_types  # noqa: E402
 from dse_quant.paper.harness import daily_run  # noqa: E402
-from dse_quant.paper.monitor import summarize  # noqa: E402
+from dse_quant.paper.monitor import status_page, summarize  # noqa: E402
 
 OUT = Path("data/paper")
 ap = argparse.ArgumentParser()
@@ -32,3 +32,5 @@ for d in days:
     print(e["asof"], "regime", e["regime"], "gate", "OPEN" if e["gate_open"] else f"CLOSED {e['gate_reasons']}",
           "orders", len(e["orders"]), "alerts", e["alerts"])
 print(json.dumps(summarize(paths["journal_path"]), indent=1))
+status_page(paths["journal_path"], OUT / "status.html")
+print("status page:", (OUT / "status.html").resolve())

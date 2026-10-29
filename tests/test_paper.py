@@ -8,7 +8,7 @@ import pandas as pd
 
 from dse_quant.limits import lock_flags
 from dse_quant.paper.harness import daily_run, load_state
-from dse_quant.paper.monitor import summarize
+from dse_quant.paper.monitor import status_page, summarize
 from tests.helpers import bars
 
 TYPES = {f"T{k}": "Equity" for k in range(6)} | {"00DSEX": "Index"}
@@ -118,6 +118,23 @@ class Harness(unittest.TestCase):
         daily_run(self.df, self.m, TYPES, self.last, **self.paths)
         self.assertEqual(len(self.journal()), 2)
         self.assertAlmostEqual(load_state(self.paths["state_path"])["cash"], 1e7)
+
+
+class StatusPage(unittest.TestCase):
+    def test_page_shows_latest_run_and_escapes_text(self):
+        tmp = Path(tempfile.mkdtemp())
+        rows = [{"asof": "2026-01-21", "gate_open": True, "gate_reasons": [], "regime": "RISK_OFF",
+                 "equity": 1e7, "kill": False, "alerts": []},
+                {"asof": "2026-01-22", "gate_open": False, "gate_reasons": ["stale_data"], "regime": "UNKNOWN",
+                 "equity": None, "kill": False, "alerts": ["input error: <script>x</script>"]}]
+        (tmp / "j.jsonl").write_text("\n".join(json.dumps(r) for r in rows))
+        status_page(tmp / "j.jsonl", tmp / "status.html")
+        page = (tmp / "status.html").read_text(encoding="utf-8")
+        self.assertIn("2026-01-22", page)
+        self.assertIn("CLOSED", page)
+        self.assertIn("stale_data", page)
+        self.assertNotIn("<script>x", page)          # journal text is data, never markup
+        self.assertIn("&lt;script&gt;", page)
 
 
 class Monitor(unittest.TestCase):

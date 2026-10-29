@@ -1,6 +1,7 @@
-"""Monitoring summary over the paper journal, plus the automatic alerts."""
+"""Monitoring summary over the paper journal, plus the automatic alerts and a local status page."""
 import json
 from collections import Counter
+from html import escape
 from pathlib import Path
 
 STALE_ALERT_DAYS = 3
@@ -31,3 +32,38 @@ def summarize(journal_path):
             "gate_open_days": sum(bool(r.get("gate_open")) for r in rows), "gate_reasons": dict(reasons),
             "regimes": dict(Counter(r.get("regime") for r in rows)), "equity_last": eq[-1] if eq else None,
             "max_drawdown": mdd, "max_consecutive_stale": best, "alerts": alerts}
+
+
+PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>DSE Paper Status</title><style>
+:root{{--bg:#fff;--fg:#1a1a1a;--mute:#666;--line:#ddd;--ok:#1a7f37;--bad:#c62828}}
+@media (prefers-color-scheme:dark){{:root{{--bg:#16181c;--fg:#e8e8e8;--mute:#999;--line:#333;--ok:#4caf6a;--bad:#ef6b6b}}}}
+body{{background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif;margin:0 auto;max-width:960px;padding:16px}}
+h1{{font-size:20px;margin:0 0 4px}}.mute{{color:var(--mute)}}.ok{{color:var(--ok)}}.bad{{color:var(--bad)}}
+.cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:16px 0}}
+.card{{border:1px solid var(--line);border-radius:8px;padding:10px}}.card b{{display:block;font-size:18px}}
+.wrap{{overflow-x:auto}}table{{border-collapse:collapse;width:100%}}td,th{{border-bottom:1px solid var(--line);padding:6px;text-align:left;white-space:nowrap}}
+</style></head><body><h1>DSE paper trading status</h1><p class="mute">Journal: {runs} runs, {first} to {last}. Strategy: none enabled.</p>
+<div class="cards">{cards}</div>{alerts}<h2>Last {n} runs</h2><div class="wrap"><table>
+<tr><th>As of</th><th>Gate</th><th>Reasons</th><th>Regime</th><th>Equity (Tk)</th><th>Alerts</th></tr>{rows}</table></div></body></html>"""
+
+
+def status_page(journal_path, out_path, last_n=30):
+    """Write a self-contained HTML status page. Journal text is escaped: it is data, not markup."""
+    rows = [json.loads(l) for l in Path(journal_path).read_text().splitlines() if l.strip()]
+    s, r = summarize(journal_path), rows[-1]
+    gate = '<span class="ok">OPEN</span>' if r.get("gate_open") else '<span class="bad">CLOSED</span>'
+    eq = lambda v: "n/a" if v is None else f"{v:,.0f}"
+    cards = "".join(f'<div class="card"><span class="mute">{k}</span><b>{v}</b></div>' for k, v in [
+        ("Latest run", escape(r["asof"])), ("Gate", gate), ("Regime", escape(str(r.get("regime")))),
+        ("Equity", eq(r.get("equity"))), ("Max drawdown", f"{s['max_drawdown']:.1%}"),
+        ("Kill switch", '<span class="bad">FIRED</span>' if r.get("kill") else "off")])
+    alerts = "".join(f'<p class="bad">⚠ {escape(a)}</p>' for a in s["alerts"])
+    body = "".join(
+        f"<tr><td>{escape(x['asof'])}</td><td>{'OPEN' if x.get('gate_open') else 'CLOSED'}</td>"
+        f"<td>{escape(', '.join(x.get('gate_reasons', [])))}</td><td>{escape(str(x.get('regime')))}</td>"
+        f"<td>{eq(x.get('equity'))}</td><td>{escape('; '.join(x.get('alerts', [])))}</td></tr>"
+        for x in reversed(rows[-last_n:]))
+    Path(out_path).write_text(PAGE.format(runs=s["runs"], first=escape(str(s["first"])), last=escape(str(s["last"])),
+                                          cards=cards, alerts=alerts, n=min(last_n, len(rows)), rows=body),
+                              encoding="utf-8")
