@@ -25,6 +25,7 @@ class Panels:
     gap_flag: pd.DataFrame
     atr: pd.DataFrame       # ATR(20) on adjusted prices, known at that day's close
     adtv: pd.DataFrame      # mean traded value over 20 sessions, no-trade days count as 0
+    vol: pd.DataFrame       # std of daily returns over 20 sessions (for impact cost)
 
 
 def build_panels(df):
@@ -41,7 +42,8 @@ def build_panels(df):
         close=close, close_raw=piv("close_raw"), value=value,
         lower_lock=flag("lower_lock"), upper_lock=flag("upper_lock"), gap_flag=flag("gap_flag"),
         atr=tr.rolling(20, min_periods=15).mean(),
-        adtv=value.fillna(0).rolling(20, min_periods=20).mean())
+        adtv=value.fillna(0).rolling(20, min_periods=20).mean(),
+        vol=close.pct_change(fill_method=None).rolling(20, min_periods=15).std())
 
 
 def eligible_mask(p, types, rules=UniverseRules()):

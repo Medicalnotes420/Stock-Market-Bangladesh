@@ -21,18 +21,20 @@ def clean(df):
 
 class Costs(unittest.TestCase):
     def test_floor_slippage(self):
-        self.assertAlmostEqual(cost_rate(1_000, 1e12), 0.0047 + 0.001)
+        self.assertAlmostEqual(cost_rate(1_000, 1e12, 0.02), 0.0047 + 0.001)
 
-    def test_impact_scales_with_sqrt(self):
-        self.assertAlmostEqual(cost_rate(4e4, 1e6), 0.0047 + 0.5 * math.sqrt(0.04))
+    def test_impact_scales_with_vol_and_sqrt(self):
+        # Tk 10 lakh vs Tk 5 crore ADTV, 2.5% daily vol -> 0.025 * sqrt(0.02) = 0.354%
+        self.assertAlmostEqual(cost_rate(1e6, 5e7, 0.025), 0.0047 + 0.025 * math.sqrt(0.02))
 
     def test_impact_capped_so_a_sale_never_costs_more_than_it_raises(self):
-        self.assertAlmostEqual(cost_rate(1e6, 5e4), 0.0047 + 0.10)       # 20x ADTV
-        self.assertAlmostEqual(cost_rate(1e6, 0), 0.0047 + 0.10)         # no turnover after a suspension
-        self.assertLess(cost_rate(1e9, 1, mult=2.0), 1.0)
+        self.assertAlmostEqual(cost_rate(1e6, 5e4, 0.05), 0.0047 + 0.10)         # 20x ADTV, 5% vol
+        self.assertAlmostEqual(cost_rate(1e6, 0, 0.02), 0.0047 + 0.10)           # no turnover after a suspension
+        self.assertAlmostEqual(cost_rate(1e6, 5e7, float("nan")), 0.0047 + 0.10)  # no vol history
+        self.assertLess(cost_rate(1e9, 1, 1.0, mult=2.0), 1.0)
 
     def test_multiplier(self):
-        self.assertAlmostEqual(cost_rate(1_000, 1e12, mult=2), 2 * (0.0047 + 0.001))
+        self.assertAlmostEqual(cost_rate(1_000, 1e12, 0.02, mult=2), 2 * (0.0047 + 0.001))
 
 
 class Metrics(unittest.TestCase):
@@ -115,7 +117,8 @@ class AlwaysBuy:
 def one_stock(closes, **kw):
     df = clean(bars("S", closes, volume=1e9, **kw))
     p = build_panels(df)
-    p.adtv.iloc[:, :] = 1e10   # fixtures are shorter than the 20-session ADTV window
+    p.adtv.iloc[:, :] = 1e10   # fixtures are shorter than the 20-session ADTV and vol windows
+    p.vol.iloc[:, :] = 0.0
     return p, pd.DataFrame(True, index=p.dates, columns=p.tickers)
 
 
@@ -141,7 +144,7 @@ class Engine(unittest.TestCase):
         p, elig = one_stock(closes)
         p.atr.iloc[:, :] = 1.0
         res = run(p, AlwaysBuy(), self.cfg(cost_mult=1.0), elig=elig)
-        rate = cost_rate(50_000, 1e10)
+        rate = cost_rate(50_000, 1e10, 0.0)      # flat prices -> zero volatility -> spread floor
         t = res.trades.iloc[0]
         self.assertAlmostEqual(t.pnl, 5000 * 10 * (1 - rate) - 5000 * 10 * (1 + rate), places=6)
 

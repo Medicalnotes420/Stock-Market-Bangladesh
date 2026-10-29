@@ -36,7 +36,7 @@ def run(p, strat, cfg, elig, regime=None):
     TP = (O + H + L + C) / 4
     has = ~np.isnan(C)
     LL, UL = p.lower_lock.values, p.upper_lock.values
-    ATR, ADTV = p.atr.values, p.adtv.values
+    ATR, ADTV, VOL = p.atr.values, p.adtv.values, p.vol.values
     E = elig.reindex(index=p.dates, columns=p.tickers).fillna(False).values.astype(bool)
     if cfg.gap_exclusion:
         E &= ~(p.gap_flag.astype(float).rolling(cfg.gap_days, min_periods=1).max().values > 0)
@@ -63,7 +63,7 @@ def run(p, strat, cfg, elig, regime=None):
             for j in sorted(pend_sell):
                 if has[t, j] and not LL[t, j] and t - entry_t[j] >= cfg.min_hold:
                     px = TP[t, j]
-                    proceeds = qty[j] * px * (1 - cost_rate(qty[j] * px, ADTV[t - 1, j], cfg.cost_mult))
+                    proceeds = qty[j] * px * (1 - cost_rate(qty[j] * px, ADTV[t - 1, j], VOL[t - 1, j], cfg.cost_mult))
                     cash += proceeds
                     close_out(t, j, proceeds, "exit")
             for j, q in list(pend_buy.items()):
@@ -71,7 +71,7 @@ def run(p, strat, cfg, elig, regime=None):
                 if not has[t, j] or UL[t, j]:
                     continue
                 px = TP[t, j]
-                rate = cost_rate(q * px, ADTV[t - 1, j], cfg.cost_mult)
+                rate = cost_rate(q * px, ADTV[t - 1, j], VOL[t - 1, j], cfg.cost_mult)
                 q = min(q, math.floor(cash / (px * (1 + rate))))
                 if q <= 0:
                     continue
