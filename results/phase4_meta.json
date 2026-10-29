@@ -1,0 +1,16 @@
+{
+ "n_trials": 132,
+ "sr_var_per_period": 0.0040366112616621805,
+ "proxy_check": {
+  "overlap_days": 2597,
+  "corr_daily": 0.885,
+  "dsex_missing_filled": 340
+ },
+ "benchmark_dsex": {
+  "oos_sharpe": 0.31620631253999015,
+  "oos_mdd": 0.4312736766879346,
+  "held_sharpe": -0.377340250479173,
+  "held_mdd": 0.2816416989657887
+ },
+ "runtime_s": 191
+}
