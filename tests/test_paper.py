@@ -138,6 +138,20 @@ class Harness(unittest.TestCase):
         self.assertAlmostEqual(load_state(self.paths["state_path"])["cash"], 1e7)
 
 
+class AuthorFlags(unittest.TestCase):
+    def test_runaway_stock_gets_rsi_97_flag_and_indicator_values(self):
+        from dse_quant.panels import build_panels
+        from dse_quant.paper.harness import watch_row
+        b = bars("UP", [10 * 1.01 ** i for i in range(80)])
+        b["high"], b["low"] = b.close * 1.01, b.close * 0.99
+        p = build_panels(lock_flags(b.assign(close_raw=b.close, gap_flag=False)))
+        w = watch_row(p, pd.DataFrame(False, p.dates, p.tickers), "UP")
+        self.assertGreaterEqual(w["rsi"], 97)
+        self.assertTrue(any(f.startswith("#39") for f in w["flags"]))
+        for k in ("mfi", "aroon_up", "adx", "bb_width"):
+            self.assertIn(k, w)
+
+
 class StatusPage(unittest.TestCase):
     def test_page_shows_latest_run_and_escapes_text(self):
         tmp = Path(tempfile.mkdtemp())
@@ -147,7 +161,8 @@ class StatusPage(unittest.TestCase):
                  "equity": None, "kill": False, "alerts": ["input error: <script>x</script>"],
                  "watchlist": {"AL-HAJTEX": {"last_bar": "2026-01-22", "close": 125.1, "change": -0.012,
                                              "lower_lock": False, "upper_lock": False, "adtv20": 1.8e7,
-                                             "eligible": False, "gap_20d": False}}}]
+                                             "eligible": False, "gap_20d": False, "rsi": 31.2,
+                                             "flags": ["#21 Aroon Up below 90 <x>"]}}}]
         (tmp / "j.jsonl").write_text("\n".join(json.dumps(r) for r in rows))
         status_page(tmp / "j.jsonl", tmp / "status.html")
         page = (tmp / "status.html").read_text(encoding="utf-8")
@@ -158,6 +173,8 @@ class StatusPage(unittest.TestCase):
         self.assertIn("&lt;script&gt;", page)
         self.assertIn("AL-HAJTEX", page)
         self.assertIn("125.1", page)
+        self.assertIn("31.2", page)
+        self.assertIn("#21 Aroon Up below 90 &lt;x&gt;", page)
 
 
 class Monitor(unittest.TestCase):

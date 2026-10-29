@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from dse_quant import indicators as ind
 from dse_quant.data.checks import data_status
 from dse_quant.panels import build_panels, eligible_mask
 from dse_quant.regime import classify, inputs as regime_inputs
@@ -26,6 +27,45 @@ def load_state(path):
     return {"cash": START_CASH, "peak_equity": START_CASH, "day_start_equity": START_CASH, "positions": {}}
 
 
+def author_flags(p, t):
+    """Indicator values and the "My Secret Series" rule flags (docs/SECRETS_LEARNINGS.md) at the latest bar.
+    The flags restate the author's rules; whether they work is what docs/SECRETS_RESULTS.md tests."""
+    h, l, c = (x[t].ffill() for x in (p.high, p.low, p.close))
+    v = p.value[t].fillna(0)
+    r, (ml, ms), (bu, _, _, bw), a = ind.rsi(c), ind.macd(c), ind.bollinger(c), ind.aroon_up(h)
+    dx, pdi, mdi = ind.adx(h, l, c)
+    mf, s13, s19 = ind.mfi(h, l, c, v), ind.sma(c, 13), ind.sma(c, 19)
+    now = lambda s: s.iloc[-1]
+    crossed = lambda x, y: x.iloc[-1] > y.iloc[-1] and x.iloc[-2] <= y.iloc[-2]
+    f = []
+    if now(r) >= 97:
+        f.append("#39 RSI 97+: author sells")
+    elif now(r) >= 90:
+        f.append("#1/#13 RSI 90+: author waits for a pullback to ~70")
+    if r.iloc[-10:].max() >= 90 and 60 <= now(r) <= 72:
+        f.append("#1 pulled back from RSI 90+ to ~70: author buys, sells at T+2")
+    if crossed(ms, ml):
+        f.append("#2 MACD line fell to its signal line: author sells")
+    if now(a) < 90:
+        f.append("#21 Aroon Up below 90: author exits a trend holding")
+    if now(bw) <= bw.iloc[-120:].quantile(0.1):
+        f.append("#25/#30 Bollinger squeeze: author's entry setup")
+    if now(c) > now(bu) and now(r) > 75:
+        f.append("#31 above upper Bollinger band with RSI 75+: author sells half")
+    if crossed(s13, s19):
+        f.append("#67 SMA13 crossed above SMA19: author's screener hit")
+    if crossed(s19, s13):
+        f.append("#3 moving average turned bearish: author sells")
+    if (now(s13) > now(s19) and now(c) <= 1.1 * now(s19) and now(pdi) > now(mdi)
+            and now(pdi) > pdi.iloc[-4] and now(mdi) < mdi.iloc[-4] and now(mf) > 60):
+        f.append("#96 SMA + ADX + Money Flow checklist met")
+    if now(v.rolling(20).mean()) < 0.1 * now(v.rolling(60).mean()):
+        f.append("#38 turnover dried up: author says chart signals fail")
+    num = lambda s: None if pd.isna(now(s)) else round(float(now(s)), 1)
+    return {"rsi": num(r), "mfi": num(mf), "aroon_up": num(a), "adx": num(dx), "plus_di": num(pdi),
+            "minus_di": num(mdi), "bb_width": num(bw * 100), "flags": f}
+
+
 def watch_row(p, elig, t):
     """What the status page shows for one watched stock, at its latest bar (raw traded prices)."""
     c = p.close_raw[t].dropna()
@@ -35,7 +75,7 @@ def watch_row(p, elig, t):
             "change": float(c.iloc[-1] / c.iloc[-2] - 1) if len(c) > 1 else None,
             "lower_lock": bool(p.lower_lock.at[d, t]), "upper_lock": bool(p.upper_lock.at[d, t]),
             "adtv20": None if pd.isna(adtv) else float(adtv), "eligible": bool(elig[t].iloc[-1]),
-            "gap_20d": bool(p.gap_flag[t].iloc[-20:].any())}
+            "gap_20d": bool(p.gap_flag[t].iloc[-20:].any()), **author_flags(p, t)}
 
 
 def daily_run(prices, market, types, asof, state_path, journal_path, orders_dir, strategy=None, watch=()):

@@ -69,7 +69,17 @@ def status_page(journal_path, out_path, last_n=30):
             f"<td>{'n/a' if v['change'] is None else format(v['change'], '+.2%')}</td>"
             f"<td>{yes(v['lower_lock'])}</td><td>{yes(v['upper_lock'], bad=False)}</td><td>{eq(v['adtv20'])}</td>"
             f"<td>{'yes' if v['eligible'] else '<span class=\"mute\">no (below liquidity floor or filter)</span>'}</td>"
-            f"<td>{yes(v['gap_20d'])}</td></tr>" for t, v in w.items()) + "</table></div>")
+            f"<td>{yes(v['gap_20d'])}</td></tr>" for t, v in w.items()) + "</table></div>"
+        + '<h2>Author\'s indicators and rule flags</h2><p class="mute">From "My Secret Series" '
+          '(docs/SECRETS_LEARNINGS.md). The rules are the author\'s; how they did in backtests is in '
+          'docs/SECRETS_RESULTS.md. Not advice.</p><div class="wrap"><table><tr><th>Stock</th><th>RSI</th>'
+          '<th>Money Flow</th><th>Aroon Up</th><th>ADX (+DI / −DI)</th><th>Bollinger width %</th>'
+          '<th>Flags</th></tr>' + "".join(
+            f"<tr><td>{escape(t)}</td><td>{v.get('rsi', 'n/a')}</td><td>{v.get('mfi', 'n/a')}</td>"
+            f"<td>{v.get('aroon_up', 'n/a')}</td><td>{v.get('adx', 'n/a')} ({v.get('plus_di', 'n/a')} / "
+            f"{v.get('minus_di', 'n/a')})</td><td>{v.get('bb_width', 'n/a')}</td>"
+            f"<td style=\"white-space:normal\">{'<br>'.join(escape(x) for x in v.get('flags', [])) or 'none'}</td></tr>"
+            for t, v in w.items()) + "</table></div>")
     body = "".join(
         f"<tr><td>{escape(x['asof'])}</td><td>{'OPEN' if x.get('gate_open') else 'CLOSED'}</td>"
         f"<td>{escape(', '.join(x.get('gate_reasons', [])))}</td><td>{escape(str(x.get('regime')))}</td>"
