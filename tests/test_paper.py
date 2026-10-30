@@ -108,6 +108,18 @@ class Harness(unittest.TestCase):
         self.assertNotIn("NOPE", e["watchlist"])
         self.assertTrue(any("NOPE" in a for a in e["alerts"]))
 
+    def test_strategy_book_runs_and_journals(self):
+        days = self.df.date.unique()[-5:]
+        for d in days:
+            e = daily_run(self.df, self.m, TYPES, d, strategy="S67", **self.paths)
+            self.assertIn("book", e)
+            self.assertIsNone(e["book"]["stopped"])
+        state = json.loads(self.paths["state_path"].read_text())
+        self.assertEqual(len(state["returns"]), 4)               # first day has no previous equity... then 4
+        rows = (self.tmp / "orders" / f"orders_{pd.Timestamp(days[-1]).date()}.csv").read_text().splitlines()
+        self.assertEqual(rows[0], "ticker,side,qty,limit_price,reason")
+        self.assertEqual(len(rows) - 1, len(e["orders"]))
+
     def test_rerun_same_day_keeps_daily_loss_baseline(self):
         prev = str(self.df.date.unique()[-2].date())
         self.paths["state_path"].write_text(json.dumps(

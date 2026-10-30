@@ -11,6 +11,8 @@ from pathlib import Path
 import pandas as pd
 
 from dse_quant import indicators as ind
+from dse_quant.paper import book
+from dse_quant.strategies import make
 from dse_quant.data.checks import data_status
 from dse_quant.panels import build_panels, eligible_mask
 from dse_quant.regime import classify, inputs as regime_inputs
@@ -18,6 +20,8 @@ from dse_quant.risk import Portfolio, RiskGate, exit_list
 
 START_CASH = 1e7  # Tk 1 crore paper account: assumption until you give capital size
 HISTORY = 500     # sessions kept; >= 250 listing history + regime windows, and keeps a run under a minute
+# paper-tracked rules: S67 is WEAK in docs/SECRETS_RESULTS.md, tracked forward with the parameters chosen for held-out
+STRATEGIES = {"S67": ("S67", {"filter96": True, "exit_rule": "cross"})}
 
 
 def load_state(path):
@@ -115,6 +119,13 @@ def daily_run(prices, market, types, asof, state_path, journal_path, orders_dir,
         last = state.get("asof")
         if last and asof < pd.Timestamp(last):
             raise ValueError(f"asof {asof.date()} is before the last run {last}; use a fresh state file to replay")
+        new_day = last != str(asof.date())
+        bar_today = status is not None and p.dates[-1] == asof
+        if strategy:
+            for k, v in book.new_book(state["cash"]).items():
+                state.setdefault(k, v)
+            if new_day and bar_today:  # fill yesterday's orders once per session; a rerun keeps them
+                entry["fills"] = book.fill_pending(state, p, len(p.dates) - 1)
         # baseline = equity at the previous day's close; a rerun of the same day keeps that day's baseline
         day_start = state["day_start_equity"] if last == str(asof.date()) else state.get("equity", state["day_start_equity"])
         pos = {t: q for t, q in state["positions"].items() if q > 0}
@@ -131,8 +142,24 @@ def daily_run(prices, market, types, asof, state_path, journal_path, orders_dir,
                 entry["exit_list"] = exit_list(pf, adtv)
         if entry["regime"] == "STRESS" and pos:
             entry["exit_list"] = entry["exit_list"] or exit_list(pf, adtv)
-        # no strategy enabled: nothing passed Phase 4, so orders stay empty by construction
         entry["equity"] = equity
+        if strategy and new_day:
+            if state.get("equity") and bar_today:
+                state["returns"].append(equity / state["equity"] - 1)
+            stale = status is None or status["latest_bar"] != status["expected"]
+            book.stop_checks(state, stale=stale, kill=entry["kill"])
+            if bar_today:
+                name, params = STRATEGIES[strategy]
+                strat = make(name, params)
+                strat.prepare(p, elig)
+                book.decide(state, strat, p, len(p.dates) - 1, regime=entry["regime"], gate_open=entry["gate_open"])
+        if strategy:
+            reason = f"stopped: {state['stopped']}" if state["stopped"] else f"{strategy} exit"
+            entry["orders"] = ([{"ticker": t, "side": "SELL", "qty": state["positions"][t], "reason": reason}
+                                for t in state["pending_sells"]]
+                               + [{"ticker": t, "side": "BUY", "qty": q, "reason": f"{strategy} entry"}
+                                  for t, q in state["pending_buys"].items()])
+            entry["book"] = {k: state[k] for k in ("cash", "positions", "stopped")}
         state_ok = True
     except Exception as e:  # corrupt or impossible state (e.g. zero equity): journal it, trade nothing
         entry["alerts"].append(f"state error: {type(e).__name__}: {e}")
@@ -145,8 +172,11 @@ def daily_run(prices, market, types, asof, state_path, journal_path, orders_dir,
     with open(Path(orders_dir) / f"orders_{asof.date()}.csv", "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["ticker", "side", "qty", "limit_price", "reason"])
-        for r in entry["exit_list"]:
-            w.writerow([r["ticker"], "SELL", r["qty"], "", "kill_switch" if entry["kill"] else "stress"])
+        for r in entry["orders"]:
+            w.writerow([r["ticker"], r["side"], r["qty"], "", r["reason"]])
+        if not strategy:  # with a strategy, the book already turns kill/STRESS into sell orders
+            for r in entry["exit_list"]:
+                w.writerow([r["ticker"], "SELL", r["qty"], "", "kill_switch" if entry["kill"] else "stress"])
     Path(journal_path).parent.mkdir(parents=True, exist_ok=True)
     with open(journal_path, "a") as f:
         f.write(json.dumps(entry, default=str) + "\n")

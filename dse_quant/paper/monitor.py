@@ -59,6 +59,18 @@ def status_page(journal_path, out_path, last_n=30):
         ("Equity", eq(r.get("equity"))), ("Max drawdown", f"{s['max_drawdown']:.1%}"),
         ("Kill switch", '<span class="bad">FIRED</span>' if r.get("kill") else "off")])
     alerts = "".join(f'<p class="bad">⚠ {escape(a)}</p>' for a in s["alerts"] + r.get("alerts", []))
+    bk = r.get("book")
+    if bk:  # paper-tracked strategy: positions, today's fills, orders for tomorrow
+        alerts += (f'<h2>Paper strategy: {escape(r.get("strategy", ""))}</h2><p class="mute">Tracked on paper only '
+                   '(WEAK in docs/SECRETS_RESULTS.md). Orders are what the rule would do next session; not advice.</p>'
+                   + (f'<p class="bad">STOPPED: {escape(bk["stopped"])}. Exits only.</p>' if bk["stopped"] else "")
+                   + f'<p>Cash Tk {bk["cash"]:,.0f} · Positions: '
+                   + (escape(", ".join(f"{t} {q:,}" for t, q in bk["positions"].items())) or "none")
+                   + "<br>Fills today: " + (escape("; ".join(f"{f['side']} {f['ticker']} {f['qty']:,} @ {f['price']}"
+                                                         for f in r.get("fills", []))) or "none")
+                   + "<br>Orders for next session: " + (escape("; ".join(f"{o['side']} {o['ticker']} {o['qty']:,} ({o['reason']})"
+                                                                     for o in r.get("orders", []))) or "none")
+                   + "</p>")
     yes = lambda b, bad=True: f'<span class="{"bad" if bad else "ok"}">yes</span>' if b else "no"
     w = r.get("watchlist") or {}
     watch = "" if not w else (

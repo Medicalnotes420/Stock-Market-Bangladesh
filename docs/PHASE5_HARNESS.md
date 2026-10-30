@@ -45,3 +45,8 @@ A strategy is stopped automatically, and an exit list is written, when any of th
   - **6:** one `risk.daily_loss_breached` is shared by the engine and RiskGate.
   - **7:** stop, trailing, target and regime-branch tests added, and a mutation check showed they catch a flipped stop comparison.
   - **8:** the stale log is deleted.
+
+## S67 paper tracking (added 2026-10-30)
+- `dse_quant/paper/book.py`: fills the previous session's orders at today's typical price, with the same costs, T+2 and lock rules as the backtest. It then queues S67 exits and entries through `risk.check_order` and writes them to the order file.
+- **Automatic stops** (`stop_checks`): 15% kill switch; stale data for 3 sessions while holding; more than 20% of the last 20 exits blocked by lower locks; live Sharpe below 0 after 60 sessions (a shortcut, until a bootstrap band exists). A stopped book only exits.
+- **Check:** a paper replay of Mar–Jun 2021 took the same 4 trades as the backtest engine, on the same entry and exit dates, plus 2 more, because the engine started earlier with different holdings.

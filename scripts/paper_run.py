@@ -20,7 +20,9 @@ OUT = Path("data/paper")
 ap = argparse.ArgumentParser()
 ap.add_argument("--asof", default=str(date.today()))
 ap.add_argument("--replay", type=int, default=0)
+ap.add_argument("--strategy", default="S67", help="paper-tracked rule, or 'none'")
 a = ap.parse_args()
+strategy = None if a.strategy == "none" else a.strategy
 
 prices = pd.read_csv("data/clean/prices.csv.gz", parse_dates=["date"])
 market = pd.read_csv("data/clean/market.csv", parse_dates=["date"]).set_index("date")
@@ -30,7 +32,7 @@ paths = dict(state_path=OUT / "state.json", journal_path=OUT / "journal.jsonl", 
 watch = [l.strip().upper() for l in Path("watchlist.txt").read_text().splitlines()
          if l.strip() and not l.startswith("#")] if Path("watchlist.txt").exists() else []
 for d in days:
-    e = daily_run(prices, market, types, d, watch=watch, **paths)
+    e = daily_run(prices, market, types, d, watch=watch, strategy=strategy, **paths)
     print(e["asof"], "regime", e["regime"], "gate", "OPEN" if e["gate_open"] else f"CLOSED {e['gate_reasons']}",
           "orders", len(e["orders"]), "alerts", e["alerts"])
 print(json.dumps(summarize(paths["journal_path"]), indent=1))

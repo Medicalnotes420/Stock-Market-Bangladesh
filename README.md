@@ -2,7 +2,7 @@
 
 Research and paper trading for Dhaka Stock Exchange stocks: a daily signal generator you execute by hand. Long-only. Nothing connects to a broker.
 
-**Status:** no strategy passed Phase 4 (docs/PHASE4_RESULTS.md), so the paper harness reports cash every day.
+**Status:** no strategy passed Phase 4 (docs/PHASE4_RESULTS.md). The paper harness tracks S67 forward (SMA13/19 cross + #96 checklist, WEAK in docs/SECRETS_RESULTS.md) with automatic stops; `--strategy none` turns it off. S67 picks from the whole liquid market, so it trades only on days with full-market data.
 
 ## Setup
 ```
