@@ -121,6 +121,7 @@ def daily_run(prices, market, types, asof, state_path, journal_path, orders_dir,
             raise ValueError(f"asof {asof.date()} is before the last run {last}; use a fresh state file to replay")
         new_day = last != str(asof.date())
         bar_today = status is not None and p.dates[-1] == asof
+        weekend = asof.dayofweek in (4, 5) and not bar_today
         if strategy:
             for k, v in book.new_book(state["cash"]).items():
                 state.setdefault(k, v)
@@ -138,6 +139,9 @@ def daily_run(prices, market, types, asof, state_path, journal_path, orders_dir,
         else:
             gate = RiskGate(pf, **status)
             entry.update(gate_open=gate.allow_new_entries, gate_reasons=gate.reasons, kill=gate.kill)
+            if weekend:  # DSE trades Sunday-Thursday: a Friday/Saturday without prices is not stale data
+                entry.update(gate_open=False, gate_reasons=[r for r in gate.reasons if r not in
+                             ("stale_data", "missing_data", "missing_index")] + ["dse_weekend"])
             if gate.kill:
                 entry["exit_list"] = exit_list(pf, adtv)
         if entry["regime"] == "STRESS" and pos:
@@ -146,7 +150,7 @@ def daily_run(prices, market, types, asof, state_path, journal_path, orders_dir,
         if strategy and new_day:
             if state.get("equity") and bar_today:
                 state["returns"].append(equity / state["equity"] - 1)
-            stale = status is None or status["latest_bar"] != status["expected"]
+            stale = not weekend and (status is None or status["latest_bar"] != status["expected"])
             book.stop_checks(state, stale=stale, kill=entry["kill"])
             if bar_today:
                 name, params = STRATEGIES[strategy]

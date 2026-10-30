@@ -58,8 +58,15 @@ class Harness(unittest.TestCase):
         e = daily_run(self.df, m, TYPES, self.last, **self.paths)
         self.assertTrue(e["regime"].endswith("(no breadth data)"))
 
+    def test_dse_weekend_without_bar_is_not_stale(self):
+        sat = self.last + pd.offsets.Week(weekday=5)               # next Saturday: DSE closed, no bar
+        e = daily_run(self.df, self.m, TYPES, sat, **self.paths)
+        self.assertFalse(e["gate_open"])
+        self.assertIn("dse_weekend", e["gate_reasons"])
+        self.assertNotIn("stale_data", e["gate_reasons"])
+
     def test_stale_data_blocks_and_alerts(self):
-        e = daily_run(self.df, self.m, TYPES, self.last + pd.offsets.BDay(3), **self.paths)
+        e = daily_run(self.df, self.m, TYPES, self.last + pd.Timedelta(days=7), **self.paths)  # a Tuesday: a DSE session with no data
         self.assertFalse(e["gate_open"])
         self.assertIn("stale_data", e["gate_reasons"])
         self.assertEqual(e["orders"], [])
