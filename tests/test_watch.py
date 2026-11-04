@@ -68,7 +68,7 @@ class Watch(unittest.TestCase):
         s = analyze(frame(np.linspace(10, 30, 80)))["secrets"]  # steady rise: RSI pinned near 100
         rsi_flag = [x for x in s if x["flag"].startswith("#39")]
         self.assertEqual(len(rsi_flag), 1)
-        self.assertEqual(rsi_flag[0]["verdict"], "not tested on its own")
+        self.assertIn("7 cases", rsi_flag[0]["verdict"])
         self.assertTrue(all(x["verdict"] for x in s))
 
     def test_render_escapes_and_has_disclaimer(self):

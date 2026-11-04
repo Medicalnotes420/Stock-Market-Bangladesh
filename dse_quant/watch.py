@@ -14,13 +14,17 @@ import pandas as pd
 from dse_quant.indicators import bollinger, macd, rsi, sma
 from dse_quant.paper.harness import author_flags
 
-# What the backtest found for each "My Secret Series" flag (docs/SECRETS_RESULTS.md); key = flag's first word
-VERDICT = {"#1/#13": "REJECTED: lost money out of sample (S1)", "#1": "REJECTED: lost money out of sample (S1)",
-           "#25/#30": "REJECTED: lost money out of sample (S25)",
-           "#67": "REJECTED on its own (S67 without the #96 filter)",
-           "#96": "WEAK: only passed with the market regime filter on (S67 + #96); not good enough to trade",
-           "#2": "exit used by the WEAK S67 rule", "#3": "exit used by the WEAK S67 rule",
-           "#21": "not tested on its own", "#31": "not tested on its own", "#39": "not tested on its own",
+# What the tests found for each "My Secret Series" flag (docs/SECRETS_RESULTS.md, docs/SECRETS_FORECAST_RESULTS.md);
+# key = flag's first word. "Forecast" = the stock's next-days move vs the average stock, 2014 to Nov 2026.
+VERDICT = {"#1/#13": "REJECTED: no forecast power, lost money traded (S1)",
+           "#1": "REJECTED: no forecast power, lost money traded (S1)",
+           "#25/#30": "REJECTED: no forecast power 2014-22, lost money traded (S25)",
+           "#67": "REJECTED: no forecast power, lost money traded",
+           "#96": "REJECTED: lost 4.3% on fresh 2026 data while DSEX gained 5.3% (S67 + #96)",
+           "#2": "SMALL EDGE: stocks lagged the market by ~0.3% over the next 5 days (held 2014-2026)",
+           "#3": "no reliable forecast power", "#21": "no reliable forecast power",
+           "#31": "OPPOSITE: these stocks beat the market by ~1.6% over the next 5 days (post-hoc finding)",
+           "#39": "only 7 cases since 2014; prices kept rising after",
            "#38": "not tested on its own (filter)"}
 
 EXPORT_URL = "https://stocknow.com.bd/api/v1/eod/export"  # undocumented; found from the site's own download button
@@ -231,8 +235,9 @@ polyline{{fill:none;stroke-width:1.5;vector-effect:non-scaling-stroke}}.c polyli
 tr.fired td{{font-weight:600}}footer{{margin-top:32px;font-size:13px}}
 </style></head><body><h1>DSE share watch</h1><p class="mute">{note}</p>{errors}{sections}
 <h2>About the My Secret Series rules</h2><p class="mute">Flags restate the author's rules (docs/SECRETS_LEARNINGS.md).
-Tested 2017&ndash;2026 (docs/SECRETS_RESULTS.md): none came near the claimed 90% success, five of six lost money, and the
-only WEAK pass (S67 + #96) needs the market regime to be RISK_ON or NEUTRAL. {regime}</p>
+Tested on DSE data 2014 to Nov 2026 (docs/SECRETS_RESULTS.md, docs/SECRETS_FORECAST_RESULTS.md): no buy rule
+forecast a rise, every rule lost money when traded on fresh 2026 data, one sell warning (#2) has a small edge and
+#31 works in reverse. Use the flags as information, not forecasts. {regime}</p>
 <footer class="mute">Descriptive analysis of the uploaded data only. Not investment advice.</footer></body></html>"""
 
 
