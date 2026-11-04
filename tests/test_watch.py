@@ -64,6 +64,13 @@ class Watch(unittest.TestCase):
         self.assertNotIn("Close below 5.00", fired)
         self.assertAlmostEqual(a["change"]["1d"], 30 / np.linspace(10, 30, 80)[-2] - 1)
 
+    def test_secret_flags_carry_backtest_verdict(self):
+        s = analyze(frame(np.linspace(10, 30, 80)))["secrets"]  # steady rise: RSI pinned near 100
+        rsi_flag = [x for x in s if x["flag"].startswith("#39")]
+        self.assertEqual(len(rsi_flag), 1)
+        self.assertEqual(rsi_flag[0]["verdict"], "not tested on its own")
+        self.assertTrue(all(x["verdict"] for x in s))
+
     def test_render_escapes_and_has_disclaimer(self):
         out = render({"<script>x</script>": analyze(frame(np.linspace(10, 30, 80)))}, self.tmp / "w.html",
                      note="<b>n</b>", errors=["<img src=x>"])

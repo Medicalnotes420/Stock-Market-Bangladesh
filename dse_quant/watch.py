@@ -6,11 +6,22 @@ import re
 import urllib.request
 from html import escape
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
 
 from dse_quant.indicators import bollinger, macd, rsi, sma
+from dse_quant.paper.harness import author_flags
+
+# What the backtest found for each "My Secret Series" flag (docs/SECRETS_RESULTS.md); key = flag's first word
+VERDICT = {"#1/#13": "REJECTED: lost money out of sample (S1)", "#1": "REJECTED: lost money out of sample (S1)",
+           "#25/#30": "REJECTED: lost money out of sample (S25)",
+           "#67": "REJECTED on its own (S67 without the #96 filter)",
+           "#96": "WEAK: only passed with the market regime filter on (S67 + #96); not good enough to trade",
+           "#2": "exit used by the WEAK S67 rule", "#3": "exit used by the WEAK S67 rule",
+           "#21": "not tested on its own", "#31": "not tested on its own", "#39": "not tested on its own",
+           "#38": "not tested on its own (filter)"}
 
 EXPORT_URL = "https://stocknow.com.bd/api/v1/eod/export"  # undocumented; found from the site's own download button
 COLS = ["open", "high", "low", "close", "volume"]
@@ -107,7 +118,11 @@ def analyze(df, above=None, below=None):
         rule(f"Close above {above:,.2f}", last > above, f"{last:,.2f}")
     if below is not None:
         rule(f"Close below {below:,.2f}", last < below, f"{last:,.2f}")
-    return {"date": day, "close": float(last), "change": chg, "trend": trend, "volatility": vol,
+    # shortcut: turnover approximated as close x volume (stocknow gives no value column); only #38 uses it
+    one = lambda col: col.to_frame("X")
+    p = SimpleNamespace(high=one(df.high), low=one(df.low), close=one(c), value=one(c * df.volume))
+    secrets = [{"flag": f, "verdict": VERDICT.get(f.split()[0], "not tested")} for f in author_flags(p, "X")["flags"]]
+    return {"date": day, "close": float(last), "change": chg, "trend": trend, "volatility": vol, "secrets": secrets,
             "support": float(df.low.iloc[-20:].min()), "resistance": float(df.high.iloc[-20:].max()),
             "rsi": float(r.iloc[-1]), "alerts": alerts,
             "series": pd.DataFrame({"close": c, "sma20": s20, "sma50": s50, "bb_up": up, "bb_lo": lo,
@@ -157,6 +172,11 @@ def _section(sym, a):
                    f'<td>{"<b class=bad>YES</b>" if x["fired"] else "no"}</td><td>{escape(x["value"])}</td>'
                    f'<td>{escape(x["date"])}</td></tr>' for x in a["alerts"])
     fired = sum(x["fired"] for x in a["alerts"])
+    sec = "".join(f'<tr><td>{escape(x["flag"])}</td><td class="{"bad" if x["verdict"].startswith("REJECTED") else ""}">'
+                  f'{escape(x["verdict"])}</td></tr>' for x in a["secrets"])
+    sec = (f'<h3>My Secret Series rules active today</h3><div class="wrap"><table><tr><th>Author\'s rule</th>'
+           f'<th>What the backtest found</th></tr>{sec}</table></div>') if sec else (
+        '<p class="mute">My Secret Series: none of the author\'s rules are active today.</p>')
     return (f'<section><h2>{escape(sym)} <span class="mute">· {fired} alert(s)</span></h2>'
             f'<p>Last close <b>Tk {a["close"]:,.2f}</b> on {escape(a["date"])}. Trend: <b>{a["trend"]}</b> '
             f'(close vs 20- and 50-day averages).<br>{chg}<br>20-day volatility {a["volatility"]:.0%} a year · '
@@ -172,7 +192,7 @@ def _section(sym, a):
             f'<g transform="translate(0,0)">{bars}</g></svg>'
             + _svg([(s.macd, "a"), (s.signal, "b")], 100, guides=(0,), label=f"{sym} MACD lines")
             + f'<div class="wrap"><table><tr><th>Rule</th><th>Fired</th><th>Value</th><th>Date</th></tr>{rows}'
-            '</table></div></section>')
+            f'</table></div>{sec}</section>')
 
 
 PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -180,7 +200,7 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 :root{{--bg:#fff;--fg:#1a1a1a;--mute:#666;--line:#ddd;--ok:#1a7f37;--bad:#c62828;--c:#1a1a1a;--a:#1f6feb;--b:#d97706;--bb:#999}}
 @media (prefers-color-scheme:dark){{:root{{--bg:#16181c;--fg:#e8e8e8;--mute:#999;--line:#333;--ok:#4caf6a;--bad:#ef6b6b;--c:#e8e8e8;--a:#58a6ff;--b:#f0a542;--bb:#666}}}}
 body{{background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif;margin:0 auto;max-width:960px;padding:16px}}
-h1{{font-size:20px;margin:0 0 4px}}h2{{font-size:18px;margin:28px 0 4px}}.mute{{color:var(--mute)}}.ok{{color:var(--ok)}}.bad{{color:var(--bad)}}
+h1{{font-size:20px;margin:0 0 4px}}h2{{font-size:18px;margin:28px 0 4px}}h3{{font-size:15px;margin:16px 0 4px}}.mute{{color:var(--mute)}}.ok{{color:var(--ok)}}.bad{{color:var(--bad)}}
 svg{{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:6px;margin:2px 0 6px}}
 polyline{{fill:none;stroke-width:1.5;vector-effect:non-scaling-stroke}}.c polyline{{stroke:var(--c)}}.a polyline{{stroke:var(--a)}}
 .b polyline{{stroke:var(--b)}}.bb polyline{{stroke:var(--bb);stroke-dasharray:3 3}}.guide{{stroke:var(--line);vector-effect:non-scaling-stroke}}
@@ -189,13 +209,29 @@ polyline{{fill:none;stroke-width:1.5;vector-effect:non-scaling-stroke}}.c polyli
 .wrap{{overflow-x:auto}}table{{border-collapse:collapse;width:100%}}td,th{{border-bottom:1px solid var(--line);padding:6px;text-align:left;white-space:nowrap}}
 tr.fired td{{font-weight:600}}footer{{margin-top:32px;font-size:13px}}
 </style></head><body><h1>DSE share watch</h1><p class="mute">{note}</p>{errors}{sections}
+<h2>About the My Secret Series rules</h2><p class="mute">Flags restate the author's rules (docs/SECRETS_LEARNINGS.md).
+Tested 2017&ndash;2026 (docs/SECRETS_RESULTS.md): none came near the claimed 90% success, five of six lost money, and the
+only WEAK pass (S67 + #96) needs the market regime to be RISK_ON or NEUTRAL. {regime}</p>
 <footer class="mute">Descriptive analysis of the uploaded data only. Not investment advice.</footer></body></html>"""
 
 
-def render(results, out_path, note="", errors=()):
-    """results: {symbol: analyze() output}. errors: messages for shares that could not be analysed."""
+def latest_regime(journal="data/paper/journal.jsonl"):
+    """Last market regime the paper run logged, as (asof, regime), or None. This page does not compute it."""
+    try:
+        r = json.loads(Path(journal).read_text().splitlines()[-1])
+        return r["asof"], r["regime"]
+    except (OSError, IndexError, KeyError, ValueError):
+        return None
+
+
+def render(results, out_path, note="", errors=(), regime=None):
+    """results: {symbol: analyze() output}. errors: messages for shares that could not be analysed.
+    regime: (asof, regime) from latest_regime(), shown next to the rule notes."""
     err = "".join(f'<p class="bad">⚠ {escape(e)}</p>' for e in errors)
-    html = PAGE.format(note=escape(note), errors=err, sections="".join(_section(k, v) for k, v in results.items()))
+    reg = (f"Last regime from the paper run: {escape(regime[1])} on {escape(regime[0])}." if regime else
+           "No regime available: run scripts/paper_run.py to compute it.")
+    html = PAGE.format(note=escape(note), errors=err, regime=reg,
+                       sections="".join(_section(k, v) for k, v in results.items()))
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     Path(out_path).write_text(html, encoding="utf-8")
     return out_path

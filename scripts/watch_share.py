@@ -12,7 +12,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from dse_quant.watch import analyze, fetch, load_csv, render  # noqa: E402
+from dse_quant.watch import analyze, fetch, latest_regime, load_csv, render  # noqa: E402
 
 OUT = Path("data/watch")
 HISTORY_DAYS = 400  # calendar days: ~270 sessions, enough for SMA50 and a 250-session chart
@@ -59,10 +59,11 @@ for s, df in data.items():
     except Exception as e:  # one bad share must not hide the others
         errors.append(f"{s}: analysis failed: {e}")
 
-render(results, a.out, note, errors)
+render(results, a.out, note, errors, latest_regime())
 for s, r in results.items():
     fired = [x["rule"] for x in r["alerts"] if x["fired"]]
-    print(f"{s} {r['date']} close {r['close']:,.2f} trend {r['trend']} | alerts: {', '.join(fired) or 'none'}")
+    print(f"{s} {r['date']} close {r['close']:,.2f} trend {r['trend']} | alerts: {', '.join(fired) or 'none'}"
+          f" | secrets: {'; '.join(x['flag'] for x in r['secrets']) or 'none'}")
 for e in errors:
     print("ERROR", e, file=sys.stderr)
 print("page:", Path(a.out).resolve())
