@@ -63,16 +63,37 @@ def load_csv(path):
     return _clean(df, str(path))
 
 
-def fetch(symbols, start, end, adjusted=True, timeout=60):
-    """Daily bars for up to 1000 DSE symbols from stocknow, as {symbol: DataFrame}. Symbols with no rows are absent."""
-    body = json.dumps({"symbols": list(symbols), "start_date": str(start), "end_date": str(end),
-                       "adjusted": adjusted}).encode()
-    req = urllib.request.Request(EXPORT_URL, body, {"Content-Type": "application/json", "User-Agent": "dse-watch/1"})
+INSTRUMENTS_URL = "https://stocknow.com.bd/api/v1/instruments"
+
+
+def _get(url, body=None, timeout=120):
+    req = urllib.request.Request(url, body and json.dumps(body).encode(),
+                                 {"Content-Type": "application/json", "User-Agent": "dse-watch/1"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        data = json.load(r)
+        return json.load(r)
+
+
+def export_rows(symbols, start, end, adjusted):
+    """Raw stocknow export: DataFrame of symbol, date, open, high, low, close, volume (may be empty)."""
+    data = _get(EXPORT_URL, {"symbols": list(symbols), "start_date": str(start), "end_date": str(end),
+                             "adjusted": adjusted})
     if "rows" not in data:
         raise ValueError(f"stocknow: unexpected reply {str(data)[:200]}")
-    df = pd.DataFrame(data["rows"])
+    return pd.DataFrame(data["rows"])
+
+
+def instruments():
+    """stocknow's instrument list with each one's latest session (code, category, close, value in Tk mn, updated_at)."""
+    data = _get(INSTRUMENTS_URL)
+    rows = list(data.values()) if isinstance(data, dict) else data
+    if not rows or "code" not in rows[0]:
+        raise ValueError(f"stocknow: unexpected instruments reply {str(data)[:200]}")
+    return pd.DataFrame(rows)
+
+
+def fetch(symbols, start, end, adjusted=True):
+    """Daily bars for up to 1000 DSE symbols from stocknow, as {symbol: DataFrame}. Symbols with no rows are absent."""
+    df = export_rows(symbols, start, end, adjusted)
     if df.empty:
         return {}
     return {s: _clean(g.reset_index(drop=True), f"stocknow {s}") for s, g in df.groupby("symbol")}

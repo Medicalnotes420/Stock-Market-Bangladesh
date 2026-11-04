@@ -72,8 +72,11 @@ market = pd.DataFrame({
     "dec": eq[eq.ret < 0].groupby("date").size(),
     "n": eq.groupby("date").size(),
 }).fillna({"adv": 0, "dec": 0}).sort_index()
-# on DSE-summary days we hold only a few stocks: use DSE's own turnover, and mark breadth as unknown
-market.loc[new_m.index, ["turnover", "adv", "dec", "n"]] = new_m[["turnover", "adv", "dec", "n"]].values
+# on DSE-summary days use DSE's own turnover; mark breadth unknown only where we hold just a few stocks
+# (full-market days from stocknow keep their computed breadth)
+market.loc[new_m.index, "turnover"] = new_m.turnover.values
+few = new_m.index[market.n.reindex(new_m.index).fillna(0) < 100]
+market.loc[few, ["adv", "dec", "n"]] = new_m.loc[few, ["adv", "dec", "n"]].values
 
 years = {}
 for y, d in market.groupby(market.index.year).tail(1).index.to_series().items():
