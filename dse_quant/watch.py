@@ -104,11 +104,15 @@ def fetch(symbols, start, end, adjusted=True):
 
 
 HORIZONS, WINDOW, BAND = (5, 20), 250, (0.10, 0.50, 0.90)
+# On days when turnover (close x volume) is >= 2x its prior 20-session average the plain range covered only ~70%;
+# x1.3 (fitted on 2014-22) brought it back to 76-84% later (docs/VOLUME_RANGE_RESULTS.md)
+WIDEN_AT, WIDEN = 2.0, 1.3
 
 
-def forecast(close, horizons=HORIZONS, window=WINDOW):
+def forecast(close, horizons=HORIZONS, window=WINDOW, widen=1.0):
     """Price range in h sessions from the share's own past h-session moves (last `window` sessions, overlapping).
     No direction is assumed beyond what history shows: it's a spread of outcomes, not a prediction of up or down.
+    `widen` stretches each side away from the middle (in log terms); see WIDEN.
     Coverage on DSE history: scripts/forecast_check.py -> results/forecast_check.csv."""
     lc = np.log(close.dropna().iloc[-window - max(horizons):])
     last, out = float(close.dropna().iloc[-1]), {}
@@ -116,7 +120,8 @@ def forecast(close, horizons=HORIZONS, window=WINDOW):
         r = (lc - lc.shift(h)).dropna().iloc[-window:]
         if len(r) < 60:
             continue
-        lo, mid, hi = (last * float(np.exp(r.quantile(q))) for q in BAND)
+        ql, qm, qh = (float(r.quantile(q)) for q in BAND)
+        lo, mid, hi = (last * float(np.exp(x)) for x in (qm - widen * (qm - ql), qm, qm + widen * (qh - qm)))
         out[h] = {"low": lo, "mid": mid, "high": hi, "p_up": float((r > 0).mean()), "p_flat": float((r == 0).mean()),
                   "n": len(r)}
     return out
@@ -166,8 +171,12 @@ def analyze(df, above=None, below=None):
     one = lambda col: col.to_frame("X")
     p = SimpleNamespace(high=one(df.high), low=one(df.low), close=one(c), value=one(c * df.volume))
     secrets = [{"flag": f, "verdict": VERDICT.get(f.split()[0], "not tested")} for f in author_flags(p, "X")["flags"]]
+    tv = c * df.volume
+    tv_ratio = float(tv.iloc[-1] / tv.iloc[-21:-1].mean()) if len(tv) > 20 and tv.iloc[-21:-1].mean() > 0 else np.nan
     return {"date": day, "close": float(last), "change": chg, "trend": trend, "volatility": vol, "secrets": secrets,
-            "forecast": forecast(c),
+            "forecast": forecast(c, widen=WIDEN if tv_ratio >= WIDEN_AT else 1.0), "turnover_ratio": tv_ratio,
+            # today's volume vs the 20 sessions before it (today left out so a spike doesn't dilute its own baseline)
+            "volume": float(df.volume.iloc[-1]), "vol_avg20": float(df.volume.iloc[-21:-1].mean()),
             "support": float(df.low.iloc[-20:].min()), "resistance": float(df.high.iloc[-20:].max()),
             "rsi": float(r.iloc[-1]), "alerts": alerts,
             "series": pd.DataFrame({"close": c, "sma20": s20, "sma50": s50, "bb_up": up, "bb_lo": lo,
@@ -223,7 +232,10 @@ def _section(sym, a):
           f'<th>Up in past moves</th></tr>{fc}</table></div><p class="mute">From this share\'s own moves over the last '
           f'{WINDOW} sessions. On DSE history 2014&ndash;2026 the real price landed inside the 80% range 78&ndash;79% of '
           'the time, but fell below it twice as often as it rose above it, and in falling years (2018, 2024) only '
-          '61&ndash;72% were inside. A range of likely outcomes, not a prediction of direction.</p>') if fc else ""
+          '61&ndash;72% were inside. A range of likely outcomes, not a prediction of direction.'
+          + (f' <b>Widened {WIDEN}&times; today:</b> turnover was {a["turnover_ratio"]:.1f}&times; its 20-day average, '
+             'and on such days the plain range held the price only ~70% of the time.'
+             if a.get("turnover_ratio", 0) >= WIDEN_AT else '') + '</p>') if fc else ""
     sec = "".join(f'<tr><td>{escape(x["flag"])}</td><td class="{"bad" if x["verdict"].startswith("REJECTED") else ""}">'
                   f'{escape(x["verdict"])}</td></tr>' for x in a["secrets"])
     sec = (f'<h3>My Secret Series rules active today</h3><div class="wrap"><table><tr><th>Author\'s rule</th>'
@@ -232,7 +244,9 @@ def _section(sym, a):
     return (f'<section><h2>{escape(sym)} <span class="mute">· {fired} alert(s)</span></h2>'
             f'<p>Last close <b>Tk {a["close"]:,.2f}</b> on {escape(a["date"])}. Trend: <b>{a["trend"]}</b> '
             f'(close vs 20- and 50-day averages).<br>{chg}<br>20-day volatility {a["volatility"]:.0%} a year · '
-            f'Support (20-day low) Tk {a["support"]:,.2f} · Resistance (20-day high) Tk {a["resistance"]:,.2f}</p>'
+            f'Support (20-day low) Tk {a["support"]:,.2f} · Resistance (20-day high) Tk {a["resistance"]:,.2f}'
+            f'<br>Volume {a["volume"]:,.0f} vs 20-day average {a["vol_avg20"]:,.0f}'
+            + (f' ({a["volume"] / a["vol_avg20"]:.1f}x)' if a["vol_avg20"] > 0 else '') + '</p>'
             f'<p class="mute legend"><i class="k c"></i>Close <i class="k a"></i>SMA20 <i class="k b"></i>SMA50 '
             f'<i class="k bb"></i>Bollinger bands · last {len(s)} sessions</p>'
             + _svg([(s.bb_up, "bb"), (s.bb_lo, "bb"), (s.sma50, "b"), (s.sma20, "a"), (s.close, "c")], 260,

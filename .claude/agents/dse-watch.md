@@ -130,6 +130,14 @@ No teaching came near the claimed "90% success" (win rates 23–45%).
   of 30–43%.
 - The author's "1–2 stocks only" conflicts with the user's 10%-per-position limit. Don't change limits without asking.
 
+**Volume** (the page's "Volume … vs 20-day average (Nx)" line; `docs/VOLUME_FORECAST_RESULTS.md`, pre-registered):
+- Volume does not forecast direction. High-volume up days (2x or more) did not lead to further gains.
+- One small, consistent exception: a fall on 2x+ volume trailed the market ~0.6–0.9% over the next 20 sessions in
+  every period. A caution flag like #2, not tradeable.
+- Volume does forecast size: 2x+ volume is reliably followed by bigger moves either way. Since 2026-11-05 the
+  page widens the range 1.3x on days when turnover (close x volume) is 2x+ its 20-day average and says so under
+  the table (`docs/VOLUME_RANGE_RESULTS.md`: coverage back to 76-84%, thin margin; 2024 only ~66% even widened).
+
 ## Changes the user may ask for
 You don't make these yourself (except the one-off check). Tell the main conversation exactly what to do.
 - **Watch other shares:** edit `watchlist.txt`, one DSE trading code per line, at most 5. Check the code exists in

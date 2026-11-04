@@ -82,6 +82,27 @@ class Watch(unittest.TestCase):
         self.assertGreater(f[20]["high"] - f[20]["low"], f[5]["high"] - f[5]["low"])  # wider further out
         self.assertEqual(analyze(frame(np.linspace(10, 20, 40)))["forecast"], {})  # too little history
 
+    def test_volume_vs_20day_average(self):
+        df = frame(np.linspace(10, 30, 80))
+        df.loc[df.index[-1], "volume"] = 3000.0  # spike today; the 20 sessions before it are 1000
+        a = analyze(df)
+        self.assertEqual((a["volume"], a["vol_avg20"]), (3000.0, 1000.0))
+        self.assertIn("(3.0x)", Path(render({"X": a}, self.tmp / "v.html")).read_text(encoding="utf-8"))
+
+    def test_range_widened_on_high_turnover(self):
+        rng = np.random.default_rng(0)
+        df = frame(100 * np.exp(np.cumsum(rng.normal(0, 0.02, 400))))
+        plain = analyze(df)
+        self.assertNotIn("Widened", Path(render({"X": plain}, self.tmp / "p.html")).read_text(encoding="utf-8"))
+        df.loc[df.index[-1], "volume"] = 3000.0  # turnover ~3x the prior 20 sessions
+        a = analyze(df)
+        for h in (5, 20):
+            p, w = plain["forecast"][h], a["forecast"][h]
+            self.assertAlmostEqual(w["mid"], p["mid"])
+            self.assertAlmostEqual(np.log(w["high"] / w["mid"]), 1.3 * np.log(p["high"] / p["mid"]))
+            self.assertAlmostEqual(np.log(w["mid"] / w["low"]), 1.3 * np.log(p["mid"] / p["low"]))
+        self.assertIn("Widened", Path(render({"X": a}, self.tmp / "w.html")).read_text(encoding="utf-8"))
+
     def test_render_escapes_and_has_disclaimer(self):
         out = render({"<script>x</script>": analyze(frame(np.linspace(10, 30, 80)))}, self.tmp / "w.html",
                      note="<b>n</b>", errors=["<img src=x>"])
