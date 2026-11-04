@@ -103,6 +103,25 @@ def fetch(symbols, start, end, adjusted=True):
     return {s: _clean(g.reset_index(drop=True), f"stocknow {s}") for s, g in df.groupby("symbol")}
 
 
+HORIZONS, WINDOW, BAND = (5, 20), 250, (0.10, 0.50, 0.90)
+
+
+def forecast(close, horizons=HORIZONS, window=WINDOW):
+    """Price range in h sessions from the share's own past h-session moves (last `window` sessions, overlapping).
+    No direction is assumed beyond what history shows: it's a spread of outcomes, not a prediction of up or down.
+    Coverage on DSE history: scripts/forecast_check.py -> results/forecast_check.csv."""
+    lc = np.log(close.dropna().iloc[-window - max(horizons):])
+    last, out = float(close.dropna().iloc[-1]), {}
+    for h in horizons:
+        r = (lc - lc.shift(h)).dropna().iloc[-window:]
+        if len(r) < 60:
+            continue
+        lo, mid, hi = (last * float(np.exp(r.quantile(q))) for q in BAND)
+        out[h] = {"low": lo, "mid": mid, "high": hi, "p_up": float((r > 0).mean()), "p_flat": float((r == 0).mean()),
+                  "n": len(r)}
+    return out
+
+
 def _cross(a, b):
     """+1 if a crossed above b on the last bar, -1 if below, 0 otherwise."""
     d = (a - b).iloc[-2:]
@@ -148,6 +167,7 @@ def analyze(df, above=None, below=None):
     p = SimpleNamespace(high=one(df.high), low=one(df.low), close=one(c), value=one(c * df.volume))
     secrets = [{"flag": f, "verdict": VERDICT.get(f.split()[0], "not tested")} for f in author_flags(p, "X")["flags"]]
     return {"date": day, "close": float(last), "change": chg, "trend": trend, "volatility": vol, "secrets": secrets,
+            "forecast": forecast(c),
             "support": float(df.low.iloc[-20:].min()), "resistance": float(df.high.iloc[-20:].max()),
             "rsi": float(r.iloc[-1]), "alerts": alerts,
             "series": pd.DataFrame({"close": c, "sma20": s20, "sma50": s50, "bb_up": up, "bb_lo": lo,
@@ -197,6 +217,13 @@ def _section(sym, a):
                    f'<td>{"<b class=bad>YES</b>" if x["fired"] else "no"}</td><td>{escape(x["value"])}</td>'
                    f'<td>{escape(x["date"])}</td></tr>' for x in a["alerts"])
     fired = sum(x["fired"] for x in a["alerts"])
+    fc = "".join(f'<tr><td>{h} sessions</td><td>Tk {f["low"]:,.2f} &ndash; {f["high"]:,.2f}</td>'
+                 f'<td>Tk {f["mid"]:,.2f}</td><td>{f["p_up"]:.0%}</td></tr>' for h, f in a.get("forecast", {}).items())
+    fc = ('<h3>Price range forecast</h3><div class="wrap"><table><tr><th>In</th><th>80% range</th><th>Middle</th>'
+          f'<th>Up in past moves</th></tr>{fc}</table></div><p class="mute">From this share\'s own moves over the last '
+          f'{WINDOW} sessions. On DSE history 2014&ndash;2026 the real price landed inside the 80% range 78&ndash;79% of '
+          'the time, but fell below it twice as often as it rose above it, and in falling years (2018, 2024) only '
+          '61&ndash;72% were inside. A range of likely outcomes, not a prediction of direction.</p>') if fc else ""
     sec = "".join(f'<tr><td>{escape(x["flag"])}</td><td class="{"bad" if x["verdict"].startswith("REJECTED") else ""}">'
                   f'{escape(x["verdict"])}</td></tr>' for x in a["secrets"])
     sec = (f'<h3>My Secret Series rules active today</h3><div class="wrap"><table><tr><th>Author\'s rule</th>'
@@ -217,7 +244,7 @@ def _section(sym, a):
             f'<g transform="translate(0,0)">{bars}</g></svg>'
             + _svg([(s.macd, "a"), (s.signal, "b")], 100, guides=(0,), label=f"{sym} MACD lines")
             + f'<div class="wrap"><table><tr><th>Rule</th><th>Fired</th><th>Value</th><th>Date</th></tr>{rows}'
-            f'</table></div>{sec}</section>')
+            f'</table></div>{fc}{sec}</section>')
 
 
 PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">

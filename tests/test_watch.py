@@ -71,6 +71,17 @@ class Watch(unittest.TestCase):
         self.assertIn("7 cases", rsi_flag[0]["verdict"])
         self.assertTrue(all(x["verdict"] for x in s))
 
+    def test_forecast_range(self):
+        rng = np.random.default_rng(0)
+        closes = 100 * np.exp(np.cumsum(rng.normal(0, 0.02, 400)))
+        f = analyze(frame(closes))["forecast"]
+        self.assertEqual(set(f), {5, 20})
+        for h in (5, 20):
+            self.assertLess(f[h]["low"], f[h]["mid"])
+            self.assertLess(f[h]["mid"], f[h]["high"])
+        self.assertGreater(f[20]["high"] - f[20]["low"], f[5]["high"] - f[5]["low"])  # wider further out
+        self.assertEqual(analyze(frame(np.linspace(10, 20, 40)))["forecast"], {})  # too little history
+
     def test_render_escapes_and_has_disclaimer(self):
         out = render({"<script>x</script>": analyze(frame(np.linspace(10, 30, 80)))}, self.tmp / "w.html",
                      note="<b>n</b>", errors=["<img src=x>"])
