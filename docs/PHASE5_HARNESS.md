@@ -46,7 +46,11 @@ A strategy is stopped automatically, and an exit list is written, when any of th
   - **7:** stop, trailing, target and regime-branch tests added, and a mutation check showed they catch a flipped stop comparison.
   - **8:** the stale log is deleted.
 
-## S67 paper tracking (added 2026-10-30)
+## S67 paper tracking (added 2026-10-30, stopped 2026-11-05)
+**Stopped:** S67 + #96 lost 4.3% on fresh 2026 data while DSEX gained 5.3%, which rejects it under the
+pre-registered rule (docs/SECRETS_FORECAST_RESULTS.md). When it was stopped the book held no positions and no
+orders. `paper_run.py` now defaults to `--strategy none`; `--strategy S67` still runs it.
+
 - `dse_quant/paper/book.py`: fills the previous session's orders at today's typical price, with the same costs, T+2 and lock rules as the backtest. It then queues S67 exits and entries through `risk.check_order` and writes them to the order file.
 - **Automatic stops** (`stop_checks`): 15% kill switch; stale data for 3 sessions while holding; more than 20% of the last 20 exits blocked by lower locks; live Sharpe below 0 after 60 sessions (a shortcut, until a bootstrap band exists). A stopped book only exits.
 - **Check:** a paper replay of Mar–Jun 2021 took the same 4 trades as the backtest engine, on the same entry and exit dates, plus 2 more, because the engine started earlier with different holdings.

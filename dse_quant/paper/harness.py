@@ -20,7 +20,8 @@ from dse_quant.risk import Portfolio, RiskGate, exit_list
 
 START_CASH = 1e7  # Tk 1 crore paper account: assumption until you give capital size
 HISTORY = 500     # sessions kept; >= 250 listing history + regime windows, and keeps a run under a minute
-# paper-tracked rules: S67 is WEAK in docs/SECRETS_RESULTS.md, tracked forward with the parameters chosen for held-out
+# paper-trackable rules: S67 was WEAK in docs/SECRETS_RESULTS.md, then rejected on fresh 2026 data
+# (docs/SECRETS_FORECAST_RESULTS.md); off by default since 2026-11-05. Parameters are those chosen for held-out
 STRATEGIES = {"S67": ("S67", {"filter96": True, "exit_rule": "cross"})}
 
 

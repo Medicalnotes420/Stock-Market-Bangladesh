@@ -20,7 +20,8 @@ OUT = Path("data/paper")
 ap = argparse.ArgumentParser()
 ap.add_argument("--asof", default=str(date.today()))
 ap.add_argument("--replay", type=int, default=0)
-ap.add_argument("--strategy", default="S67", help="paper-tracked rule, or 'none'")
+# S67 stopped 2026-11-05: rejected on fresh 2026 data (docs/SECRETS_FORECAST_RESULTS.md); still runnable by name
+ap.add_argument("--strategy", default="none", help="paper-tracked rule (S67), or 'none'")
 a = ap.parse_args()
 strategy = None if a.strategy == "none" else a.strategy
 
