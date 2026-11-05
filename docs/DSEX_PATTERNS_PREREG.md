@@ -42,3 +42,26 @@ The unit is one session. t = mean / (sd / √n) over sessions.
 - DOWN3 is not independent of MOM1; it is included because the author of "My Secret Series" and many traders reason
   in streaks.
 - SUN compares Sunday to other days, so one Sunday's return also moves the "other days" mean slightly; ignored.
+
+## Addendum: tradable backtest (fixed 2026-11-05, before `scripts/dsex_backtest.py` was run)
+The index cannot be bought, so each pattern trades a **basket**: an equal-weight basket of the 30 eligible stocks
+(eligible_mask) with the highest 20-session traded value as of the previous close. Membership is updated daily.
+
+Fills follow docs/PHASE4_PREREG.md: the signal is read at close t, and the fill is at session t+1's typical price
+(O+H+L+C)/4. A position can be sold no earlier than two sessions after it was bought (T+2). Each switch in or out
+pays cost_rate() per basket name for a Tk 1 crore order split evenly over the 30 names. The basket is forced flat
+during the floor-price periods.
+
+| Id | In the market when (at close t) | Out when |
+|---|---|---|
+| BH | always (benchmark: buy and hold the basket) | never |
+| S_MOM1 | DSEX rose today | DSEX fell today |
+| S_BR1 | breadth b_t > 0 | b_t < 0 (no breadth data: keep the current position) |
+| S_DOWN3 | by default | after 3 DSEX down days; back in after the next up day |
+| S_SUN | from Sunday's close until Wednesday's close | Wednesday's close signal → sold Thursday, back Sunday |
+
+Changing `S_SUN` to sit out exactly over the weekend is not possible: a Sunday close signal fills on Monday.
+The rule above is out of the market for Thursday → Sunday, which is where the measured weakness sits.
+
+**Verdict per strategy:** BEATS BUY-AND-HOLD if its annualised net return is above BH's in A, B and C, and its
+Sharpe is above BH's in A. Otherwise DOES NOT BEAT. Nothing is tuned; there is one rule per pattern.
