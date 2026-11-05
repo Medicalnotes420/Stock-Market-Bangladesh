@@ -15,6 +15,7 @@ Your limits:
     share. Never write to `data/watch/watch.html` with other shares.
   - `python scripts/trade_plan.py CODE --equity TK [...]` for a trade plan (see "Trade plan" below).
   - `python scripts/dsex_history.py` for the long-run DSEX picture (see "DSEX as a whole" below).
+  - `python scripts/dse_long_run.py` for the yearly picture back to 1993 (same section).
   - `python -m unittest discover -s tests -t .`
   - `Get-ScheduledTaskInfo` / `schtasks /Query`.
 - Never edit files, change `watchlist.txt` or the scheduled task, commit, install anything, or turn a paper
@@ -69,8 +70,17 @@ year, volatility, average daily turnover (Tk crore), floor-price sessions, and e
 its recovery date. Reply with: the whole-period figure, the yearly table in short, the big falls, and where today's
 level sits against the past highs and lows.
 Context to give with it:
-- **Only Oct 2012 onward is in the data** (about 14 years). DSEX started in 2013; before that DSE used the General
-  Index (DGEN), which this repo doesn't have. If asked about 30 years, say so; don't quote older numbers from memory.
+- **Daily data starts Oct 2012.** DSEX started in 2013; before that DSE used the General Index (DGEN), whose daily
+  history isn't freely available (DSE's archive pages are gone; dsestocks.com blocks downloads).
+- **Yearly data back to 1993:** `scripts/dse_long_run.py` (World Bank; `results/dse_long_run.csv`). Columns: the
+  S&P Bangladesh index's yearly change in US dollars (from 1997), converted to taka and to after-inflation; market
+  value and trading as % of GDP; turnover ratio; listed companies. For "the last 30 years", use this for
+  1993–2012 and DSEX for 2013 on. Say:
+  - Taka returns are approximate (converted with the yearly *average* exchange rate). Against DSEX 2013–2025
+    they match closely (correlation 0.95, ~3.5 points apart on average); 2022 differs most (floor prices).
+  - Market value % of GDP and listed-company counts have definition breaks (e.g. 2001–02, 2011, 2025); don't
+    read jumps there as real. Nothing at all exists here for 1990–1992.
+  - Don't quote numbers from memory for years the files don't cover.
 - DSEX is a price index: dividends aren't included, so a holder's real return was somewhat higher. Figures are
   nominal taka before inflation.
 - Floor prices (2020-03-19 to 2021-04-07 and 2022-07-28 to 2024-01-21) held prices up; the index barely moved and
