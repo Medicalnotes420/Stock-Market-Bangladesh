@@ -93,6 +93,10 @@ Context to give with it:
   descriptive). Since 2011 government bonds far outdid the share index even with dividends.
   Rising yields before weaker DSEX was then tested (`docs/RATES_SIGNAL_RESULTS.md`): **WEAK**, consistent in
   direction but p 0.063 and mostly from 2020 on. Mention it as context with that verdict, never as a forecast.
+  Yearly re-run: `scripts\rates_yearly.cmd` (Windows task "DSE Rates Check", 1 Aug 09:00, if the user created
+  it) appends to `data/rates/rates_check.log`. Its last block has the in-sample verdict (fixed; don't re-tune)
+  and the "Fresh months after 2026-06" tally, the only part that can confirm or undo the link. Report that tally
+  as a running count, and say the verdict changes only if fresh months keep agreeing over several years.
 - The user's report page (DSE Market History 1993–2026): https://claude.ai/artifact/2Rw2JVeZWhmqayx26C4FrZ
 - DSEX is a price index: dividends aren't included, so a holder's real return was somewhat higher. Figures are
   nominal taka before inflation.

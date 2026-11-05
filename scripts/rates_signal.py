@@ -12,6 +12,16 @@ from calendar_events import spearman_perm  # noqa: E402
 from dsex_patterns import FLOOR  # noqa: E402
 
 HALF_END = pd.Period("2019-12", "M")
+FRESH_AFTER = pd.Period("2026-06", "M")  # the test was fixed on 2026-11-05 with bond data to June 2026
+
+
+def fresh_check(d):
+    """Months after FRESH_AFTER (data the test never saw): next-6-month DSEX after a yield rise vs not."""
+    f = d[d.index > FRESH_AFTER]
+    up, flat = f.outcome[f.signal > 0], f.outcome[f.signal <= 0]
+    return {"months": len(f), "rising": len(up), "not_rising": len(flat),
+            "after_rise": up.mean() if len(up) else np.nan, "after_no_rise": flat.mean() if len(flat) else np.nan,
+            "agrees": bool(len(up) and len(flat) and up.mean() < flat.mean())}
 
 
 def samples(m, h):
@@ -65,4 +75,13 @@ if __name__ == "__main__":
     print(f"no-floor sensitivity (h=6): median rho {rnf.rho.median():+.2f}, median p {rnf.p.median():.3f}")
     print(f"next 6 months when yields rose: {100 * d6.outcome[d6.signal > 0].mean():+.1f}% vs "
           f"{100 * d6.outcome[d6.signal <= 0].mean():+.1f}% when not (all months, overlapping)")
-    print("Verdict:", v)
+    print("Verdict:", v, "(in-sample, fixed 2026-11-05)")
+    fc = fresh_check(d6)
+    if fc["months"] == 0:
+        print(f"Fresh months after {FRESH_AFTER}: none complete yet (each needs 6 more months of DSEX).")
+    else:
+        print(f"Fresh months after {FRESH_AFTER}: {fc['months']} ({fc['rising']} after a yield rise, "
+              f"{fc['not_rising']} not). Next 6 months: {100 * fc['after_rise']:+.1f}% after a rise vs "
+              f"{100 * fc['after_no_rise']:+.1f}% otherwise -> "
+              + ("agrees with the link" if fc["agrees"] else "does not agree yet (or too few of one kind)")
+              + ". Overlapping months: read as a running tally, not a test.")

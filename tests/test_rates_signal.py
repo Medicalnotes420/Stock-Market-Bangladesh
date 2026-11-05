@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from rates_signal import by_start, samples, verdict  # noqa: E402
+from rates_signal import by_start, fresh_check, samples, verdict  # noqa: E402
 
 
 class TestRatesSignal(unittest.TestCase):
@@ -22,6 +22,13 @@ class TestRatesSignal(unittest.TestCase):
         r = by_start(d, 3)
         self.assertEqual(list(r.n), [4, 4, 4])
         self.assertTrue((r.rho < -0.99).all())
+
+    def test_fresh_check_uses_only_new_months(self):
+        idx = pd.period_range("2026-05", periods=4, freq="M")  # May, Jun (in-sample), Jul, Aug (fresh)
+        d = pd.DataFrame({"signal": [1.0, 1.0, 0.5, -0.5], "outcome": [0.5, 0.5, -0.02, 0.03]}, idx)
+        f = fresh_check(d)
+        self.assertEqual((f["months"], f["rising"], f["not_rising"]), (2, 1, 1))
+        self.assertTrue(f["agrees"])
 
     def test_verdict_rules(self):
         neg = pd.DataFrame({"rho": [-0.5, -0.4], "p": [0.01, 0.02]})
