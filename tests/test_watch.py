@@ -5,8 +5,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from dse_quant.watch import (SKEW_SHIFT, adjust_for_dividend, analyze, forecast, load_csv, log_forecasts, parse_news,
-                             rates_status, render, score_forecasts, upcoming_dividend)
+from dse_quant.watch import (SKEW_SHIFT, adjust_for_dividend, analyze, data_warnings, forecast, load_csv, log_forecasts,
+                             parse_news, rates_status, render, score_forecasts, upcoming_dividend)
 
 
 def frame(closes):
@@ -184,6 +184,19 @@ class WatchExtras(unittest.TestCase):
         log_forecasts({"X": dict(res(idx[28])["X"])}, path)  # not due yet
         sc = score_forecasts(pd.read_csv(path, dtype={"made_on": str}), {"X": close})
         self.assertEqual(sc["X"][5], {"checked": 2, "inside": 1, "below": 0, "above": 1})
+
+    def test_data_warnings(self):
+        thin = frame(np.linspace(5, 9, 80))  # 80 sessions, Tk 5-9 x 1,000 shares a day, under Tk 10
+        w = data_warnings(thin)
+        self.assertEqual(len(w), 3)
+        self.assertIn("only 80 sessions", w[0])
+        liquid = frame(np.linspace(100, 120, 260)).assign(volume=1e6)  # ~Tk 11 crore a day
+        self.assertEqual(data_warnings(liquid), [])
+        a = analyze(thin)
+        a["score"], a["score_src"] = {5: {"checked": 0}}, "one-off"
+        html = Path(render({"X": a}, self.tmp / "w.html")).read_text(encoding="utf-8")
+        self.assertIn("Less tested here", html)
+        self.assertIn("one_off_forecast_log.csv", html)
 
     def test_rates_line(self):
         p = self.tmp / "r.csv"

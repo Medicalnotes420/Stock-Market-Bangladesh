@@ -67,10 +67,12 @@ for s, df in data.items():
         except (OSError, ValueError, KeyError) as e:
             results[s]["news"] = f"news fetch from dse.com.bd failed: {e}"
 
-if not a.csv and not a.symbols and results:  # the watchlist run keeps a track record of its own ranges
-    scores = score_forecasts(log_forecasts(results), {s: df.close for s, df in data.items()})
+if not a.csv and results:  # fetched shares keep a track record; one-off checks in their own log
+    src = "one-off" if a.symbols else "watchlist"
+    log = OUT / ("one_off_forecast_log.csv" if a.symbols else "forecast_log.csv")
+    scores = score_forecasts(log_forecasts(results, log), {s: df.close for s, df in data.items()})
     for s in results:
-        results[s]["score"] = scores.get(s, {})
+        results[s]["score"], results[s]["score_src"] = scores.get(s, {}), src
 
 render(results, a.out, note, errors, latest_regime(), rates_status())
 for s, r in results.items():

@@ -14,6 +14,7 @@ import pandas as pd
 
 from dse_quant.indicators import bollinger, macd, rsi, sma
 from dse_quant.paper.harness import author_flags
+from dse_quant.universe import UniverseRules
 
 # What the tests found for each "My Secret Series" flag (docs/SECRETS_RESULTS.md, docs/SECRETS_FORECAST_RESULTS.md);
 # key = flag's first word. "Forecast" = the stock's next-days move vs the average stock, 2014 to Nov 2026.
@@ -205,6 +206,23 @@ def adjust_for_dividend(a, items):
     return a
 
 
+def data_warnings(df, rules=UniverseRules()):
+    """Ways this share falls outside the shares the range's hit rate was measured on (scripts/forecast_check.py
+    checks only universe-eligible shares). Empty list if none.
+    shortcut: the 90%-of-sessions-traded rule is not checked (needs the DSE session calendar); add it if a share
+    with long trading gaps shows up."""
+    c, out = df.close, []
+    if len(c) < rules.min_history:
+        out.append(f"only {len(c)} sessions of prices (tested shares had at least {rules.min_history})")
+    med = float((c * df.volume).iloc[-rules.lookback:].median())  # close x volume, as elsewhere on this page
+    if med < rules.min_median_value:
+        out.append(f"median daily turnover of about Tk {med / 1e6:,.1f} million over the last {rules.lookback} "
+                   f"sessions (tested shares traded at least Tk {rules.min_median_value / 1e6:,.0f} million)")
+    if c.iloc[-1] < rules.min_price:
+        out.append(f"a price below Tk {rules.min_price:g} (tested shares were at Tk {rules.min_price:g} or more)")
+    return out
+
+
 def _cross(a, b):
     """+1 if a crossed above b on the last bar, -1 if below, 0 otherwise."""
     d = (a - b).iloc[-2:]
@@ -256,7 +274,7 @@ def analyze(df, above=None, below=None):
             # today's volume vs the 20 sessions before it (today left out so a spike doesn't dilute its own baseline)
             "volume": float(df.volume.iloc[-1]), "vol_avg20": float(df.volume.iloc[-21:-1].mean()),
             "support": float(df.low.iloc[-20:].min()), "resistance": float(df.high.iloc[-20:].max()),
-            "rsi": float(r.iloc[-1]), "alerts": alerts,
+            "rsi": float(r.iloc[-1]), "alerts": alerts, "data_warnings": data_warnings(df),
             "series": pd.DataFrame({"close": c, "sma20": s20, "sma50": s50, "bb_up": up, "bb_lo": lo,
                                     "rsi": r, "macd": ml, "signal": ms, "hist": ml - ms}).iloc[-250:]}
 
@@ -314,7 +332,8 @@ def _section(sym, a):
           '66&ndash;75%. A range of likely outcomes, not a prediction of direction.'
           + (f' <b>Widened {WIDEN}&times; today:</b> turnover was {a["turnover_ratio"]:.1f}&times; its 20-day average, '
              'and on such days the plain range held the price only ~70% of the time.'
-             if a.get("turnover_ratio", 0) >= WIDEN_AT else '') + _div_note(a) + '</p>' + _score_note(a)) if fc else ""
+             if a.get("turnover_ratio", 0) >= WIDEN_AT else '') + _div_note(a) + '</p>' + _warn_note(a)
+          + _score_note(a)) if fc else ""
     sec = "".join(f'<tr><td>{escape(x["flag"])}</td><td class="{"bad" if x["verdict"].startswith("REJECTED") else ""}">'
                   f'{escape(x["verdict"])}</td></tr>' for x in a["secrets"])
     sec = (f'<h3>My Secret Series rules active today</h3><div class="wrap"><table><tr><th>Author\'s rule</th>'
@@ -351,16 +370,30 @@ def _div_note(a):
             f'by the dividend when trading resumes, {where}. Holders receive the cash.')
 
 
+def _warn_note(a):
+    w = a.get("data_warnings")
+    if not w:
+        return ""
+    return ('<p class="bad"><b>Less tested here:</b> the 76&ndash;83% hit rate was measured only on shares with enough '
+            'history and trading. This share has ' + escape("; ".join(w)) + '. Outside that group the range may hold less '
+            'often, so trust it less and look at the track record.</p>')
+
+
 def _score_note(a):
     sc = a.get("score")
     if sc is None:
         return ""
+    one_off = a.get("score_src") == "one-off"
     if not any(v["checked"] for v in sc.values()):
-        return ('<p class="mute">Track record: this page started saving its ranges on 2026-11-05; none has reached '
+        return ('<p class="mute">Track record: one-off checks save their ranges to data/watch/one_off_forecast_log.csv;'
+                ' none for this share has reached its end date yet. Check it again after 5 sessions for a first score.'
+                '</p>' if one_off else
+                '<p class="mute">Track record: this page started saving its ranges on 2026-11-05; none has reached '
                 'its end date yet.</p>')
     parts = [f'{h} sessions: {v["inside"]} of {v["checked"]} inside ({v["inside"] / v["checked"]:.0%}), '
              f'{v["below"]} below, {v["above"]} above' for h, v in sorted(sc.items()) if v["checked"]]
-    return ('<p><b>Track record of this page\'s ranges</b> (saved each morning, checked when due): '
+    how = "saved at each one-off check of this share" if one_off else "saved each morning"
+    return (f'<p><b>Track record of this page\'s ranges</b> ({how}, checked when due): '
             + "; ".join(parts) + '. An 80% range should hold about 80%.</p>')
 
 

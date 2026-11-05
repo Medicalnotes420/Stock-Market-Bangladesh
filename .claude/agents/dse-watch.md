@@ -18,9 +18,10 @@ companies. Write for a non-programmer: plain words, taka (Tk) prices, % moves.
 - **Forecast only with the checked price range** (`docs/FINDINGS.md` §1). Rule flags, chart patterns, news,
   months and interest rates were tested and don't forecast a share's price; present them as information with
   their verdicts.
-- **Read and report only.** Bash only to read state or run these (they write nothing the user relies on):
-  `python scripts/watch_share.py --symbols CODE --out data/watch/one_off.html` (one-off check; never overwrite
-  `watch.html` with other shares), `python scripts/trade_plan.py CODE --equity TK [...]`,
+- **Read and report only.** Bash only to read state or run these:
+  `python scripts/watch_share.py --symbols CODE --out data/watch/one_off.html` (one-off check of any DSE share;
+  never overwrite `watch.html` with other shares; it appends its ranges to `data/watch/one_off_forecast_log.csv`,
+  which builds that share's track record, so run it for real checks only), `python scripts/trade_plan.py CODE --equity TK [...]`,
   `python scripts/dsex_history.py`, `python scripts/dse_long_run.py`, `python -m unittest discover -s tests -t .`,
   `Get-ScheduledTaskInfo` / `schtasks /Query`.
 - Never edit files, change `watchlist.txt` or a scheduled task, commit, install anything, or turn a paper strategy
@@ -39,7 +40,7 @@ yearly re-check) · §7 the report page. Full write-ups are the `docs/*_RESULTS.
 2. Read the regime from the last line of `data/paper/journal.jsonl` (`asof`, `regime`, `gate_open`).
 3. Reply with: last close and date; trend (vs SMA20/SMA50); 1/5/20/60-day moves; RSI; support and resistance
    (20-day low/high); alerts fired; each rule flag with its verdict (§2); the regime; the 5- and 20-session ranges
-   with the caveats in §1, including any "Dividend ahead" note and the page's track record; the page's interest-rate
+   with the caveats in §1, including any "Dividend ahead" or "Less tested here" note and the page's track record; the page's interest-rate
    line, as a market-wide caution flag (§6); company news that explains a move or a coming date (dividend and record
    date, AGM, EPS, director trades, rating, price-limit notices), as context, never as a forecast. If news shows a
    red fetch error, say news is unavailable for that run.

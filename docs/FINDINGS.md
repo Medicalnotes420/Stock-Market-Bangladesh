@@ -18,7 +18,12 @@ Built by `dse_quant.watch.forecast`: 10%/50%/90% of the share's own past 5- and 
 - **Live track record:** each morning the watchlist run saves its ranges to `data/watch/forecast_log.csv` and,
   once 5 or 20 sessions have passed, scores them; the page shows "Track record of this page's ranges: X of N
   inside". This is the best evidence of whether to trust the ranges. Quote it when it has entries; until then say
-  none has come due yet.
+  none has come due yet. One-off checks (`--symbols`) keep their own log, `data/watch/one_off_forecast_log.csv`,
+  scored the next time that share is checked (since 2026-11-05).
+- **Less tested here** (since 2026-11-05): the 76–83% was measured only on shares passing the universe screen
+  (250+ sessions, median turnover ≥ Tk 2 crore over 60 sessions, price ≥ Tk 10; `scripts/forecast_check.py`). The
+  page names any of these a share fails. Say so whenever it shows: the range may hold less often for that share.
+  Turnover is close × volume, so it can read low. Both watched shares are under Tk 2 crore.
 - Never give a single-price prediction, a direction call, or a range beyond 20 sessions. "Up in past moves" is
   history, not a prediction. The middle is the typical outcome, not a target.
 
