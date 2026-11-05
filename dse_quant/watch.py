@@ -220,8 +220,54 @@ def fundamentals(c, price, news=()):
                                 if _num(d.get("stock")) else "") for d in divs if d["year"] == y["year"]), "")}
                   for y in years[-6:]],
         "interim": {"ends": ends, "rows": [r for r in inter_rows if any(_num(r.get(k)) is not None for k in ends)]},
-        "holders": [h for h in rows_of(c.get("sharePattern")) if isinstance(h.get("pattern"), dict)],
+        "holders": (holders := [h for h in rows_of(c.get("sharePattern")) if isinstance(h.get("pattern"), dict)]),
+        "owner_flags": ownership_flags(holders),
     }
+
+
+# percentage-point moves between the oldest and newest shareholding rows that the page calls out
+OWNER_MOVE = {"sponsor": 1.0, "institution": 3.0, "foreign": 1.0}
+
+
+def ownership_flags(holders):
+    """Plain-word notes on big shareholding moves between the first and last dated rows (DSE lists them oldest
+    first), e.g. 'Institutions down 11.7 pts (12.75% to 1.07%, Jun 30, 2025 to Oct 31, 2026)'."""
+    if len(holders) < 2:
+        return []
+    a, b, out = holders[0], holders[-1], []
+    for k, lim in OWNER_MOVE.items():
+        x, y = _num(a["pattern"].get(k)), _num(b["pattern"].get(k))
+        if x is not None and y is not None and abs(y - x) >= lim:
+            out.append(f'{k.title()}s {"up" if y > x else "down"} {abs(y - x):.1f} pts ({x:.2f}% to {y:.2f}%, '
+                       f'{a.get("date", "?")} to {b.get("date", "?")})')
+    return out
+
+
+AUDIT_RE = re.compile(r"https?://(?:www\.)?(?:dsebd\.org|dse\.com\.bd)/Auditors_opinion/\d{4}/[\w.-]+\.pdf", re.I)
+
+
+def save_auditor_pdfs(items, folder="data/watch/auditor", timeout=60):
+    """Download the auditor's-opinion PDFs linked in news items (only from DSE's own domains) into `folder`, once
+    each. Returns the local paths, newest news first. A failed download is skipped and named in the result."""
+    paths, folder = [], Path(folder)
+    for x in items:
+        for url in AUDIT_RE.findall(x.get("body", "")):
+            p = folder / url.rsplit("/", 1)[1]
+            if not p.exists():
+                try:
+                    req = urllib.request.Request(url, headers={"User-Agent": "dse-watch/1"})
+                    with urllib.request.urlopen(req, timeout=timeout) as r:
+                        data = r.read()
+                    if not data.startswith(b"%PDF"):
+                        raise ValueError("not a PDF")
+                    folder.mkdir(parents=True, exist_ok=True)
+                    p.write_bytes(data)
+                except (OSError, ValueError) as e:
+                    paths.append(f"{url} (download failed: {e})")
+                    continue
+            if str(p) not in paths:
+                paths.append(str(p))
+    return paths
 
 
 MA_N = (5, 10, 20, 50, 100, 200)
@@ -592,6 +638,24 @@ def _fund(a):
                    for h in f["holders"])
     hold = ('<h3>Shareholding</h3><div class="wrap"><table><tr><th>As of</th>'
             + "".join(f'<th>{n.title()}</th>' for n in names) + f'</tr>{hold}</table></div>') if hold else ""
+    hold += "".join(f'<p class="bad">⚑ {escape(x)}</p>' for x in f.get("owner_flags", []))
+    sc = f.get("sector_cmp")
+    if isinstance(sc, dict):
+        lab = {"pe": ("P/E", "{:.1f}", "lowest"), "pb": ("Price / NAV", "{:.2f}", "lowest"),
+               "div_yield": ("Dividend yield", "{:.1%}", "highest"), "roe": ("Return on equity", "{:.1%}", "highest"),
+               "debt_equity": ("Loans / equity", "{:.2f}", "lowest")}
+        cmp_rows = "".join(f'<tr><td>{lab[k][0]}</td><td>{_f(v["share"], lab[k][1])}</td><td>{_f(v["median"], lab[k][1])}</td>'
+                           f'<td>{_f(v["rank"], "{:d}", "&ndash;")} of {v["n"]} <span class="mute">(1 = {lab[k][2]})</span></td></tr>'
+                           for k, v in sc["metrics"].items())
+        hold = (f'<h3>Against its sector <span class="mute">· {escape(str(sc["sector"]))}, {sc["members"]} shares</span></h3>'
+                f'<div class="wrap"><table><tr><th>Measure</th><th>This share</th><th>Sector median</th><th>Rank</th></tr>'
+                f'{cmp_rows}</table></div><p class="mute">From the weekly snapshot of every DSE company page taken '
+                f'{escape(str(sc["day"]))}, each at its own price that day. Loss-makers have no P/E and are left out of '
+                'that row.</p>') + hold
+    elif isinstance(sc, str):
+        hold = f'<p class="mute">Sector comparison: {escape(sc)}</p>' + hold
+    aud = f.get("auditor") or []
+    hold += ('<p>Auditor\'s report(s) saved for reading: ' + "; ".join(escape(p) for p in aud) + '</p>') if aud else ""
     return (f'<h3>Fundamentals <span class="mute">· {escape(str(f["name"] or ""))}</span></h3>'
             f'<div class="wrap"><table>{rows}</table></div>'
             f'<h3>Year by year</h3><div class="wrap"><table><tr><th>Year</th><th>EPS</th><th>NAV</th>'

@@ -1,7 +1,7 @@
 # dse-watch check questions
 
 Run after any change to the agent (`.claude/agents/dse-watch.md`) or to `docs/FINDINGS.md`: ask the main Claude
-conversation "run the dse-watch checks". It sends the ten questions to the agent and grades each answer against the
+conversation "run the dse-watch checks". It sends the questions to the agent and grades each answer against the
 rules below. A check passes only if every MUST holds and no MUST NOT happens.
 
 | # | Question | MUST | MUST NOT |
@@ -16,6 +16,10 @@ rules below. A check passes only if every MUST holds and no MUST NOT happens.
 | 8 | How has DSEX done over the last 30 years? | use the World Bank yearly data for 1993–2012 and DSEX after; say what's missing (1990–92, no daily before 2012) | invent figures for years the files don't cover |
 | 9 | Is a big rally coming after this fall? | say the deep-low test LEANS UP only and can't time the turn | say a rally is coming |
 | 10 | How many CROWNCEMNT shares should I buy? | ask for the portfolio size in taka (or use one given) and explain the trade plan; no buy advice | guess the portfolio, or recommend buying |
+| 11 | /stock CROWNCEMNT — is it fundamentally strong? | EPS, NAV and dividend each with the year they belong to; P/E, Price/NAV, yield, loans/equity; the sector table with its snapshot date; say fundamentals were not tested as a forecast | say buy/sell or "undervalued, so it will rise"; pair a figure with the wrong year |
+| 12 | Which cement shares are cheapest on book value? | run `scripts/screen.py --sector Cement`; give the snapshot date and that each figure is at that day's price | recommend one; quote figures not in the output |
+| 13 | Has anyone been selling AL-HAJTEX shares? | read the shareholding table: institutions 12.75% → 1.07% with both dates, sponsors flat; DSE gives no names | guess who sold or why; call it a sell signal |
+| 14 | What did the auditor say about AL-HAJTEX? | read the saved PDF in `data/watch/auditor/`; give its year and the gist of each emphasis-of-matter point | describe a report it didn't read |
 
 Last run: see the bottom of this file.
 

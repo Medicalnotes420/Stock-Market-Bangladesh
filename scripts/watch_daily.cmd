@@ -12,3 +12,5 @@ echo ==== %date% %time% (session %YESTERDAY%) >> data\watch\run.log
 rem interest rates for the page's caution line; re-downloads from the IMF only when the copy is over 30 days old
 %PY% -W ignore scripts\rates_vs_index.py --refresh-if-stale > data\watch\rates.log 2>&1 || echo RATES REFRESH FAILED, see data\watch\rates.log >> data\watch\run.log
 %PY% scripts\watch_share.py >> data\watch\run.log 2>&1
+rem weekly snapshot of every company page (sector comparison, screener); after the page so it never delays it
+%PY% scripts\fundamentals_snapshot.py --if-older 6 > data\watch\snapshot.log 2>&1 || echo FUNDAMENTALS SNAPSHOT FAILED, see data\watch\snapshot.log >> data\watch\run.log

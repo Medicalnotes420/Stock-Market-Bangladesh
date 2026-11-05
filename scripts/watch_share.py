@@ -12,11 +12,14 @@ from datetime import date, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from dse_quant.fundamentals import latest_snapshot, sector_view, table  # noqa: E402
 from dse_quant.watch import (adjust_for_dividend, analyze, company_page, fetch, fundamentals,  # noqa: E402
-                             latest_regime, load_csv, log_forecasts, rates_status, render, score_forecasts)
+                             latest_regime, load_csv, log_forecasts, rates_status, render, save_auditor_pdfs,
+                             score_forecasts)
 
 OUT = Path("data/watch")
-HISTORY_DAYS = 400  # calendar days: ~270 sessions, enough for SMA50 and a 250-session chart
+# calendar days: ~540 sessions, so EMA200 has settled (an EMA's first day still weighs ~7% after 270 sessions)
+HISTORY_DAYS = 800
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--csv", nargs="+", help="uploaded CSV file(s), one share each")
@@ -53,7 +56,7 @@ else:
         df.to_csv(OUT / f"{s}.csv")
     note = f"Source: stocknow.com.bd adjusted daily prices, fetched {date.today():%Y-%m-%d}"
 
-results = {}
+results, snap_tab = {}, None  # snapshot table loaded once, on first need
 for s, df in data.items():
     try:
         results[s] = analyze(df, a.above, a.below)
@@ -71,8 +74,15 @@ for s, df in data.items():
             results[s]["fund"] = (fundamentals(co, results[s]["close"], news_items) if co else
                                   "no company figures found on the dse.com.bd page (layout may have changed)")
         except Exception as e:  # an odd company record must not stop the other shares or the page
-
             results[s]["fund"] = f"reading company figures from dse.com.bd failed: {e}"
+        f = results[s]["fund"]
+        if isinstance(f, dict):
+            if snap_tab is None:
+                snap = latest_snapshot()
+                snap_tab = (snap[0], table(snap[1])) if snap else ("", None)
+            f["sector_cmp"] = (sector_view(snap_tab[1], s, snap_tab[0]) if snap_tab[1] is not None else
+                               "no weekly snapshot yet (python scripts/fundamentals_snapshot.py)")
+            f["auditor"] = save_auditor_pdfs(results[s]["news"])  # the agent reads these; [] if none linked
 
 if not a.csv and results:  # fetched shares keep a track record; one-off checks in their own log
     src = "one-off" if a.symbols else "watchlist"

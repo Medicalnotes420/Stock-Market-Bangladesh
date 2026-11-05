@@ -111,7 +111,18 @@ category, market cap, EPS, P/E, NAV, Price/NAV, ROE (EPS / NAV), last dividend a
 and loans/equity (equity = NAV × shares, approximate), reserves, a year-by-year EPS/NAV/profit/dividend table,
 the latest interim quarters, and shareholding. DSE fills its yearly table late, so the newest figures win: EPS
 from the interim table's annual column, NAV and dividend from the year-end dividend declaration in the news.
-Not tested as a price forecast; context only. No sector comparison yet (it would need every peer's page).
+Not tested as a price forecast; context only.
+
+**Weekly snapshot** (`scripts/fundamentals_snapshot.py`, run by the morning task when the last one is over 6 days
+old; `data/fundamentals/snapshot_<date>.json.gz`): every listed company's figures. It gives the page's
+"Against its sector" table (rank and sector median for P/E, Price/NAV, yield, ROE, loans/equity, each share at
+its own snapshot-day price; loss-makers left out of P/E) and the screener `scripts/screen.py`. Snapshots are
+kept so a fundamentals test (e.g. do low Price/NAV shares beat DSEX?) can be pre-registered once a year or more
+has built up; until then nothing here is a forecast.
+
+**Ownership flags**: the page flags sponsor or foreign moves of 1+ point and institution moves of 3+ points
+between DSE's oldest and newest shareholding rows. **Auditor's reports** linked in the news are saved to
+`data/watch/auditor/` for reading.
 
 **Technical summary** is an investing.com-style tally: price above each simple/exponential MA (5–200) reads
 bullish; oscillators use textbook thresholds (RSI 30/70, Stochastic 20/80, Williams %R −80/−20, CCI ±100, ADX
