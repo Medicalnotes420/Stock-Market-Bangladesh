@@ -23,4 +23,4 @@ Stocks for the status page's watchlist go in `watchlist.txt`, one DSE trading co
 `paper_run.py --replay N` replays the last N sessions. It needs a fresh `data/paper/` folder, because the harness refuses dates older than its last run.
 
 ## Docs
-docs/PHASE1_SPEC.md (venue facts, regime, risk limits) · PHASE2_PLAN.md · PHASE3_DATA.md · PHASE4_PREREG.md · PHASE4_RESULTS.md · PHASE5_HARNESS.md
+docs/PHASE1_SPEC.md (venue facts, regime, risk limits) · PHASE2_PLAN.md · PHASE3_DATA.md · PHASE4_PREREG.md · PHASE4_RESULTS.md · PHASE5_HARNESS.md · DSEX_PATTERNS_PREREG.md / DSEX_PATTERNS_RESULTS.md (index-level patterns)
