@@ -81,6 +81,12 @@ Context to give with it:
   - Market value % of GDP and listed-company counts have definition breaks (e.g. 2001–02, 2011, 2025); don't
     read jumps there as real. Nothing at all exists here for 1990–1992.
   - Don't quote numbers from memory for years the files don't cover.
+- **Months, elections, pay scales:** `docs/CALENDAR_EVENTS_RESULTS.md` (`python -W ignore scripts/calendar_events.py`,
+  pre-registered). March and October were weak almost every year (PATTERN); June leans up (HINT only); last
+  year's return doesn't predict this year's. The likely reason for March/October is dividend record dates
+  (DSEX is prices only), not tested, so never present it as a chance to sell and buy back. Elections and pay
+  scales: too few to show a pattern; quote the table as what happened, nothing more.
+- The user's report page (DSE Market History 1993–2026): https://claude.ai/artifact/2Rw2JVeZWhmqayx26C4FrZ
 - DSEX is a price index: dividends aren't included, so a holder's real return was somewhat higher. Figures are
   nominal taka before inflation.
 - Floor prices (2020-03-19 to 2021-04-07 and 2022-07-28 to 2024-01-21) held prices up; the index barely moved and
