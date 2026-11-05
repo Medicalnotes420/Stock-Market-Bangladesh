@@ -5,7 +5,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from dse_quant.watch import SKEW_SHIFT, analyze, forecast, load_csv, parse_news, render
+from dse_quant.watch import (SKEW_SHIFT, adjust_for_dividend, analyze, forecast, load_csv, log_forecasts, parse_news,
+                             rates_status, render, score_forecasts, upcoming_dividend)
 
 
 def frame(closes):
@@ -139,6 +140,61 @@ class Watch(unittest.TestCase):
             self.assertIn("Dividend &lt;Declaration&gt;", html)
             a["news"] = "news fetch failed: timeout"
             self.assertIn("news fetch failed", Path(render({"X": a}, Path(d) / "w.html")).read_text(encoding="utf-8"))
+
+
+
+
+DECL = {"type": "Dividend", "summary": "Dividend Declaration",
+        "body": "The Board of Directors has recommended 22.50% Cash Dividend for the year ended June 30, 2026. "
+                "Date of AGM: 12.12.2026. Record Date: 17.11.2026. The Company has also reported EPS of Tk. 5.08."}
+
+
+class WatchExtras(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+
+    def test_upcoming_dividend_formats(self):
+        d = upcoming_dividend([DECL], pd.Timestamp("2026-11-04"))
+        self.assertEqual((d["record"], d["pct"], d["tk"]), (pd.Timestamp("2026-11-17"), 22.5, 2.25))
+        words = dict(DECL, body="recommended 1% Cash Dividend ... Record Date: 18th November 2026. EPS")
+        self.assertEqual(upcoming_dividend([words], pd.Timestamp("2026-11-04"))["record"], pd.Timestamp("2026-11-18"))
+        self.assertIsNone(upcoming_dividend([DECL], pd.Timestamp("2026-11-20")))  # record date already passed
+        stock = dict(DECL, body="recommended 35% Stock Dividend. Record Date: 15.01.2026.")
+        self.assertIsNone(upcoming_dividend([stock], pd.Timestamp("2026-01-01")))
+
+    def test_dividend_lowers_only_horizons_that_pass_it(self):
+        a = {"date": "2026-11-04", "close": 56.25,
+             "forecast": {5: {"low": 50.0, "mid": 55.0, "high": 60.0}, 20: {"low": 45.0, "mid": 55.0, "high": 65.0}}}
+        adjust_for_dividend(a, [DECL])  # 17 Nov is 8 Sun-Thu days after 4 Nov: past the 5-session horizon
+        self.assertEqual(a["dividend"]["horizons"], [20])
+        self.assertEqual(a["forecast"][5]["mid"], 55.0)
+        self.assertAlmostEqual(a["forecast"][20]["mid"], 55.0 * (1 - 2.25 / 56.25))
+
+    def test_log_and_score(self):
+        idx = pd.bdate_range("2026-01-01", periods=30)
+        close = pd.Series(np.full(30, 100.0), idx)
+        close.iloc[10 + 5] = 120.0  # 5 sessions after the second forecast date: above its range
+        res = lambda day: {"X": {"date": f"{day:%Y-%m-%d}", "close": 100.0,
+                                 "forecast": {5: {"low": 90.0, "mid": 100.0, "high": 110.0}}}}
+        path = self.tmp / "log.csv"
+        log_forecasts(res(idx[0]), path)
+        log_forecasts(res(idx[0]), path)  # same day twice: kept once
+        log = log_forecasts(res(idx[10]), path)
+        self.assertEqual(len(log), 2)
+        log_forecasts({"X": dict(res(idx[28])["X"])}, path)  # not due yet
+        sc = score_forecasts(pd.read_csv(path, dtype={"made_on": str}), {"X": close})
+        self.assertEqual(sc["X"][5], {"checked": 2, "inside": 1, "below": 0, "above": 1})
+
+    def test_rates_line(self):
+        p = self.tmp / "r.csv"
+        pd.DataFrame({"month": [f"2026-{m:02d}" for m in range(1, 8)], "bond_yield": [9, 9, 9, 9, 9, 9, 10.0],
+                      "deposit_rate": [8.0] * 7}).to_csv(p, index=False)
+        rs = rates_status(p)
+        self.assertEqual((rs["bond_yield"]["change"], rs["deposit_rate"]["change"]), (1.0, 0.0))
+        df = frame(np.linspace(10, 30, 80))
+        html = Path(render({"X": analyze(df)}, self.tmp / "w.html", rates=rs)).read_text(encoding="utf-8")
+        self.assertIn("Rates have been rising", html)
+        self.assertIn("WEAK", html)
 
 
 if __name__ == "__main__":

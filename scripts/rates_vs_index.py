@@ -1,10 +1,12 @@
 """Bangladesh government bond and T-bill yields vs the stock index. Descriptive: what happened, not a forecast.
-Run from the repo root: python scripts/rates_vs_index.py   (add --refresh to re-download the IMF data)
+Run from the repo root: python scripts/rates_vs_index.py   (--refresh re-downloads the IMF data;
+--refresh-if-stale only when the copy is over 30 days old, as the daily run does)
 Output: results/rates_monthly.csv, results/rates_yearly.csv and a printed summary.
 Rates: IMF Monetary and Financial Statistics (MFS_IR), monthly, cached in data/raw/imf/. The IMF's recent
 Bangladesh lending and deposit rates look mislabelled (lending below deposit), so they are not used."""
 import re
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -14,7 +16,8 @@ import pandas as pd
 RAW = Path("data/raw/imf/MFS_IR_BGD.xml")
 URL = "https://api.imf.org/external/sdmx/2.1/data/IMF.STA,MFS_IR/BGD..M?startPeriod=1990"
 SERIES = {"S13BOND_RT_PT_A_PT": "bond_yield", "GSTBILY_RT_PT_A_PT": "tbill_yield",
-          "MFS172_RT_PT_A_PT": "repo_rate"}
+          "MFS172_RT_PT_A_PT": "repo_rate",
+          "MFS135_RT_PT_A_PT": "deposit_rate"}  # tracks fixed-deposit rates (docs/DEPOSIT_RATES_PREREG.md)
 
 
 def parse(xml, series=SERIES):
@@ -46,7 +49,8 @@ def yearly(rates, wb):
 
 
 if __name__ == "__main__":
-    if "--refresh" in sys.argv or not RAW.exists():
+    stale = RAW.exists() and time.time() - RAW.stat().st_mtime > 30 * 86400
+    if "--refresh" in sys.argv or not RAW.exists() or ("--refresh-if-stale" in sys.argv and stale):
         RAW.parent.mkdir(parents=True, exist_ok=True)
         with urllib.request.urlopen(URL, timeout=120) as r:
             RAW.write_bytes(r.read())

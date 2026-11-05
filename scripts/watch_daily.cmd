@@ -9,4 +9,6 @@ echo ==== %date% %time% (session %YESTERDAY%) >> data\watch\run.log
 %PY% scripts\fetch_dse_daily.py >> data\watch\run.log 2>&1 && ^
 %PY% -W ignore scripts\build_clean.py > data\watch\build_clean.log 2>&1 && ^
 %PY% -W ignore scripts\paper_run.py --asof %YESTERDAY% >> data\watch\run.log 2>&1 || echo DATA PIPELINE FAILED, see above and data\watch\build_clean.log >> data\watch\run.log
+rem interest rates for the page's caution line; re-downloads from the IMF only when the copy is over 30 days old
+%PY% -W ignore scripts\rates_vs_index.py --refresh-if-stale > data\watch\rates.log 2>&1 || echo RATES REFRESH FAILED, see data\watch\rates.log >> data\watch\run.log
 %PY% scripts\watch_share.py >> data\watch\run.log 2>&1

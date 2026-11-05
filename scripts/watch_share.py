@@ -12,7 +12,8 @@ from datetime import date, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from dse_quant.watch import analyze, fetch, latest_regime, load_csv, news, render  # noqa: E402
+from dse_quant.watch import (adjust_for_dividend, analyze, fetch, latest_regime, load_csv, log_forecasts,  # noqa: E402
+                             news, rates_status, render, score_forecasts)
 
 OUT = Path("data/watch")
 HISTORY_DAYS = 400  # calendar days: ~270 sessions, enough for SMA50 and a 250-session chart
@@ -62,10 +63,16 @@ for s, df in data.items():
     if not a.csv:  # a news failure is shown in the share's section; it does not fail the run
         try:
             results[s]["news"] = news(s)
+            adjust_for_dividend(results[s], results[s]["news"])
         except (OSError, ValueError, KeyError) as e:
             results[s]["news"] = f"news fetch from dse.com.bd failed: {e}"
 
-render(results, a.out, note, errors, latest_regime())
+if not a.csv and not a.symbols and results:  # the watchlist run keeps a track record of its own ranges
+    scores = score_forecasts(log_forecasts(results), {s: df.close for s, df in data.items()})
+    for s in results:
+        results[s]["score"] = scores.get(s, {})
+
+render(results, a.out, note, errors, latest_regime(), rates_status())
 for s, r in results.items():
     fired = [x["rule"] for x in r["alerts"] if x["fired"]]
     print(f"{s} {r['date']} close {r['close']:,.2f} trend {r['trend']} | alerts: {', '.join(fired) or 'none'}"

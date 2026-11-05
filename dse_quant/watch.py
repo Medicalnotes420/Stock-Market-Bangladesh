@@ -159,6 +159,52 @@ def forecast(close, horizons=HORIZONS, window=WINDOW, widen=1.0):
     return out
 
 
+FACE_VALUE = 10.0  # shortcut: DSE cash dividends are % of face value, Tk 10 for almost every share; read it per share if one isn't
+DIV_RE = re.compile(r"recommended\s+([\d.]+)%\s+cash dividend", re.I)
+REC_RE = re.compile(r"record date:?\s*(\d{1,2})(?:st|nd|rd|th)?[.\-/ ]+([A-Za-z]+|\d{1,2})[.\-/ ,]+(\d{4})", re.I)
+
+
+def upcoming_dividend(items, after):
+    """Newest cash-dividend declaration in dse.com.bd news whose record date is after `after` (a Timestamp):
+    {"record": Timestamp, "pct": float, "tk": Tk per share} or None. Stock (bonus) dividends are left out: the
+    adjusted prices already absorb them."""
+    for x in items:
+        if x.get("type") != "Dividend":
+            continue
+        text = f'{x.get("summary", "")} {x.get("body", "")}'
+        d, r = DIV_RE.search(text), REC_RE.search(text)
+        if not (d and r):
+            continue
+        day, mon, yr = r.groups()
+        rec = pd.to_datetime(f"{day} {mon} {yr}", format="%d %m %Y" if mon.isdigit() else "mixed", dayfirst=True,
+                             errors="coerce")
+        if pd.notna(rec) and rec > after:
+            pct = float(d.group(1))
+            return {"record": rec, "pct": pct, "tk": pct / 100 * FACE_VALUE}
+    return None
+
+
+def sessions_until(start, end):
+    """DSE sessions (Sun-Thu; holidays not known here) after `start` up to and including `end`."""
+    days = pd.date_range(start + pd.Timedelta(days=1), end, freq="D")
+    return int(sum(d.dayofweek not in (4, 5) for d in days))  # Friday, Saturday closed
+
+
+def adjust_for_dividend(a, items):
+    """Lower the range for any horizon that passes an upcoming cash-dividend record date: the price drops by about
+    the dividend when trading resumes. Mutates a["forecast"]; records what was done in a["dividend"]."""
+    div = upcoming_dividend(items, pd.Timestamp(a["date"])) if isinstance(items, list) else None
+    if not div or not a.get("forecast"):
+        return a
+    n = sessions_until(pd.Timestamp(a["date"]), div["record"])
+    drop = min(div["tk"] / a["close"], 0.5)
+    hit = [h for h in a["forecast"] if n < h]  # trading resumes after the record date, inside the horizon
+    for h in hit:
+        a["forecast"][h] = {**a["forecast"][h], **{k: a["forecast"][h][k] * (1 - drop) for k in ("low", "mid", "high")}}
+    a["dividend"] = {**div, "sessions": n, "drop": drop, "horizons": hit}
+    return a
+
+
 def _cross(a, b):
     """+1 if a crossed above b on the last bar, -1 if below, 0 otherwise."""
     d = (a - b).iloc[-2:]
@@ -268,7 +314,7 @@ def _section(sym, a):
           '66&ndash;75%. A range of likely outcomes, not a prediction of direction.'
           + (f' <b>Widened {WIDEN}&times; today:</b> turnover was {a["turnover_ratio"]:.1f}&times; its 20-day average, '
              'and on such days the plain range held the price only ~70% of the time.'
-             if a.get("turnover_ratio", 0) >= WIDEN_AT else '') + '</p>') if fc else ""
+             if a.get("turnover_ratio", 0) >= WIDEN_AT else '') + _div_note(a) + '</p>' + _score_note(a)) if fc else ""
     sec = "".join(f'<tr><td>{escape(x["flag"])}</td><td class="{"bad" if x["verdict"].startswith("REJECTED") else ""}">'
                   f'{escape(x["verdict"])}</td></tr>' for x in a["secrets"])
     sec = (f'<h3>My Secret Series rules active today</h3><div class="wrap"><table><tr><th>Author\'s rule</th>'
@@ -292,6 +338,30 @@ def _section(sym, a):
             + _svg([(s.macd, "a"), (s.signal, "b")], 100, guides=(0,), label=f"{sym} MACD lines")
             + f'<div class="wrap"><table><tr><th>Rule</th><th>Fired</th><th>Value</th><th>Date</th></tr>{rows}'
             f'</table></div>{fc}{sec}{_news(a)}</section>')
+
+
+def _div_note(a):
+    d = a.get("dividend")
+    if not d:
+        return ""
+    where = (f'so the {" and ".join(f"{h}-session" for h in d["horizons"])} range is lowered by {d["drop"]:.1%}'
+             if d["horizons"] else "after both horizons, so the ranges are unchanged")
+    return (f' <b>Dividend ahead:</b> {d["pct"]:g}% cash (about Tk {d["tk"]:,.2f} a share at Tk {FACE_VALUE:g} face '
+            f'value), record date {d["record"]:%d %b %Y}, about {d["sessions"]} sessions away; the price usually drops '
+            f'by the dividend when trading resumes, {where}. Holders receive the cash.')
+
+
+def _score_note(a):
+    sc = a.get("score")
+    if sc is None:
+        return ""
+    if not any(v["checked"] for v in sc.values()):
+        return ('<p class="mute">Track record: this page started saving its ranges on 2026-11-05; none has reached '
+                'its end date yet.</p>')
+    parts = [f'{h} sessions: {v["inside"]} of {v["checked"]} inside ({v["inside"] / v["checked"]:.0%}), '
+             f'{v["below"]} below, {v["above"]} above' for h, v in sorted(sc.items()) if v["checked"]]
+    return ('<p><b>Track record of this page\'s ranges</b> (saved each morning, checked when due): '
+            + "; ".join(parts) + '. An 80% range should hold about 80%.</p>')
 
 
 def _news(a, n=6):
@@ -337,13 +407,78 @@ def latest_regime(journal="data/paper/journal.jsonl"):
         return None
 
 
-def render(results, out_path, note="", errors=(), regime=None):
+LOG_COLS = ["made_on", "symbol", "h", "low", "mid", "high", "close"]
+
+
+def log_forecasts(results, path="data/watch/forecast_log.csv"):
+    """Append each share's ranges (one row per horizon), once per share and data date."""
+    path = Path(path)
+    old = pd.read_csv(path, dtype={"made_on": str}) if path.exists() else pd.DataFrame(columns=LOG_COLS)
+    new = pd.DataFrame([{"made_on": a["date"], "symbol": s, "h": h, "low": f["low"], "mid": f["mid"],
+                         "high": f["high"], "close": a["close"]}
+                        for s, a in results.items() for h, f in a.get("forecast", {}).items()], columns=LOG_COLS)
+    both = pd.concat([old, new], ignore_index=True).drop_duplicates(["made_on", "symbol", "h"], keep="first")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    both.to_csv(path, index=False)
+    return both
+
+
+def score_forecasts(log, closes):
+    """log: forecast_log rows; closes: {symbol: close Series indexed by date}. For each row whose horizon has
+    passed, where the close h sessions later landed. Returns {symbol: {h: {checked, inside, below, above}}}."""
+    out = {}
+    for r in log.itertuples():
+        c = closes.get(r.symbol)
+        if c is None:
+            continue
+        i = c.index.searchsorted(pd.Timestamp(r.made_on), side="right") + int(r.h) - 1  # h sessions after made_on
+        if i >= len(c) or c.index[c.index.searchsorted(pd.Timestamp(r.made_on))] != pd.Timestamp(r.made_on):
+            continue
+        v = c.iloc[i]
+        s = out.setdefault(r.symbol, {}).setdefault(int(r.h), {"checked": 0, "inside": 0, "below": 0, "above": 0})
+        s["checked"] += 1
+        s["inside" if r.low <= v <= r.high else "below" if v < r.low else "above"] += 1
+    return out
+
+
+def rates_status(path="results/rates_monthly.csv", h=6):
+    """Latest bond and deposit rates (IMF, monthly) and their change over h months, or None."""
+    try:
+        r = pd.read_csv(path)
+    except OSError:
+        return None
+    out = {}
+    for col in ("bond_yield", "deposit_rate"):
+        if col not in r:
+            continue
+        x = r[["month", col]].dropna()
+        if len(x) > h:
+            out[col] = {"month": x.month.iloc[-1], "level": float(x[col].iloc[-1]),
+                        "change": float(x[col].iloc[-1] - x[col].iloc[-1 - h])}
+    return out or None
+
+
+def _rates_line(rs):
+    if not rs:
+        return ""
+    names = {"bond_yield": "government bond yield", "deposit_rate": "deposit rate"}
+    parts = [f'{names[k]} {v["level"]:.2f}% ({"up" if v["change"] > 0 else "down" if v["change"] < 0 else "flat"} '
+             f'{abs(v["change"]):.2f} pts in 6 months, to {escape(v["month"])})' for k, v in rs.items()]
+    rising = any(v["change"] > 0 for v in rs.values())
+    return ('<p><b>Interest rates</b> (IMF): ' + "; ".join(parts) + ". "
+            + ('<span class="bad">Rates have been rising.</span> ' if rising else 'Rates have not been rising. ')
+            + '<span class="mute">On DSE history, rising bond and deposit rates came before weaker DSEX, but the tests '
+            'rated the link WEAK (docs/RATES_SIGNAL_RESULTS.md, docs/DEPOSIT_RATES_RESULTS.md): a caution flag for '
+            'the whole market, not a forecast.</span></p>')
+
+
+def render(results, out_path, note="", errors=(), regime=None, rates=None):
     """results: {symbol: analyze() output}. errors: messages for shares that could not be analysed.
     regime: (asof, regime) from latest_regime(), shown next to the rule notes."""
     err = "".join(f'<p class="bad">⚠ {escape(e)}</p>' for e in errors)
     reg = (f"Last regime from the paper run: {escape(regime[1])} on {escape(regime[0])}." if regime else
            "No regime available: run scripts/paper_run.py to compute it.")
-    html = PAGE.format(note=escape(note), errors=err, regime=reg,
+    html = PAGE.format(note=escape(note), errors=err + _rates_line(rates), regime=reg,
                        sections="".join(_section(k, v) for k, v in results.items()))
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     Path(out_path).write_text(html, encoding="utf-8")
