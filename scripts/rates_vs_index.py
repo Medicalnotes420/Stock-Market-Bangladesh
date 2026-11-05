@@ -17,12 +17,12 @@ SERIES = {"S13BOND_RT_PT_A_PT": "bond_yield", "GSTBILY_RT_PT_A_PT": "tbill_yield
           "MFS172_RT_PT_A_PT": "repo_rate"}
 
 
-def parse(xml):
-    """IMF SDMX structure-specific XML -> monthly DataFrame of the SERIES columns (percent a year)."""
+def parse(xml, series=SERIES):
+    """IMF SDMX structure-specific XML -> monthly DataFrame of the `series` columns (percent a year)."""
     cols = {}
     for m in re.finditer(r"<Series ([^>]*)>(.*?)</Series>", xml, re.S):
         attrs = dict(re.findall(r'(\w+)="([^"]*)"', m.group(1)))
-        name = SERIES.get(attrs.get("INDICATOR"))
+        name = series.get(attrs.get("INDICATOR"))
         if not name or attrs.get("FREQUENCY") != "M":
             continue
         obs = {}
@@ -31,8 +31,9 @@ def parse(xml):
             if "TIME_PERIOD" in a and "OBS_VALUE" in a:
                 obs[pd.Period(a["TIME_PERIOD"].replace("-M", "-"), "M")] = float(a["OBS_VALUE"])
         cols[name] = pd.Series(obs)
-    if "bond_yield" not in cols:
-        raise ValueError("IMF reply has no Bangladesh government bond yield series")
+    missing = set(series.values()) - set(cols)
+    if missing:
+        raise ValueError(f"IMF reply is missing {sorted(missing)} for Bangladesh")
     return pd.DataFrame(cols).sort_index()
 
 

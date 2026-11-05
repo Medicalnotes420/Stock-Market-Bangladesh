@@ -93,6 +93,10 @@ Context to give with it:
   descriptive). Since 2011 government bonds far outdid the share index even with dividends.
   Rising yields before weaker DSEX was then tested (`docs/RATES_SIGNAL_RESULTS.md`): **WEAK**, consistent in
   direction but p 0.063 and mostly from 2020 on. Mention it as context with that verdict, never as a forecast.
+  **Deposit rates** (`docs/DEPOSIT_RATES_RESULTS.md`, pre-registered): same picture, WEAK for both "move together"
+  and "predicts" but negative in every cut (both eras, without floor, without 2020–21); shares don't move rates;
+  most of it is the general rate cycle shared with bond yields. Say "a modest, consistent link, a caution flag".
+  The IMF "deposit rate" tracks fixed-deposit rates, not Bangladesh Bank's weighted average (~6.3% in 2025).
   Yearly re-run: `scripts\rates_yearly.cmd` (Windows task "DSE Rates Check", 1 Aug 09:00, if the user created
   it) appends to `data/rates/rates_check.log`. Its last block has the in-sample verdict (fixed; don't re-tune)
   and the "Fresh months after 2026-06" tally, the only part that can confirm or undo the link. Report that tally

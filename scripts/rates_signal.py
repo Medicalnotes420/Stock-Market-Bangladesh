@@ -24,9 +24,9 @@ def fresh_check(d):
             "agrees": bool(len(up) and len(flat) and up.mean() < flat.mean())}
 
 
-def samples(m, h):
-    """m: monthly DataFrame [bond_yield, dsex] indexed by Period. Rows t with signal, outcome, floor share."""
-    sig = m.bond_yield - m.bond_yield.shift(h)
+def samples(m, h, col="bond_yield"):
+    """m: monthly DataFrame [col, dsex] indexed by Period. Rows t with signal, outcome, floor share."""
+    sig = m[col] - m[col].shift(h)
     out = m.dsex.shift(-h) / m.dsex - 1
     floor = pd.Series(0.0, m.index)
     for a, b in FLOOR:
