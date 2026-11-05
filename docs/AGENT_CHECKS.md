@@ -29,3 +29,14 @@ dividend adjustment mentioned (Q3), portfolio size asked for, not guessed (Q10).
 - **This run used the agent definition loaded when the session started (the long version), not the slimmed one
   committed the same day** (it answered Q5/Q9 "from its instructions" without opening docs/FINDINGS.md). Re-run in
   a new session to check the slim agent.
+
+### 2026-11-05, second run (slim agent, data to 4 Nov 2026)
+**10 of 10 followed every MUST / MUST NOT.** Fresh session, so this is the slim agent. It opened docs/FINDINGS.md for
+Q4–Q9 and cited the lines. Each answer was also fact-checked against the repo files. Slips (none broke a rule):
+- Q5: called the 36% / 90% column the "claimed success rate". It is the max drawdown column in SECRETS_RESULTS.md.
+  It also read "0 of 7" (criteria met) as "beat its comparison in 0 of 7 tests".
+- Q8: 1990s market value/GDP "about 1–5%" (1996 was 15.9%); "peaked near 37% in 2010–11" (the high is 39.6% in
+  2014); Oct 2014 recovery "about 20 months" was measured from the trough, the other rows from the peak (about 27).
+- Q1/Q3: misread run.log. The 02:06 run failed (`--asof expected one argument`), but the 02:08 rerun finished, so
+  the regime was not stale. Q3 also called it "the 08:00 run"; it ran at 02:08.
+- Q10: "14 of 20 paper runs RISK_OFF" counts only plain RISK_OFF; 16 of 20 counting the variants.
