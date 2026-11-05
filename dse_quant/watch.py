@@ -135,6 +135,9 @@ HORIZONS, WINDOW, BAND = (5, 20), 250, (0.10, 0.50, 0.90)
 # On days when turnover (close x volume) is >= 2x its prior 20-session average the plain range covered only ~70%;
 # x1.3 (fitted on 2014-22) brought it back to 76-84% later (docs/VOLUME_RANGE_RESULTS.md)
 WIDEN_AT, WIDEN = 2.0, 1.3
+# Unshifted ranges missed below ~2x as often as above; a log shift fitted on 2014-22 evened the misses in 2023-26
+# and lifted coverage (docs/RANGE_SKEW_RESULTS.md). Keys must match HORIZONS.
+SKEW_SHIFT = {5: 0.01, 20: 0.03}
 
 
 def forecast(close, horizons=HORIZONS, window=WINDOW, widen=1.0):
@@ -149,7 +152,8 @@ def forecast(close, horizons=HORIZONS, window=WINDOW, widen=1.0):
         if len(r) < 60:
             continue
         ql, qm, qh = (float(r.quantile(q)) for q in BAND)
-        lo, mid, hi = (last * float(np.exp(x)) for x in (qm - widen * (qm - ql), qm, qm + widen * (qh - qm)))
+        s = SKEW_SHIFT.get(h, 0.0)
+        lo, mid, hi = (last * float(np.exp(x - s)) for x in (qm - widen * (qm - ql), qm, qm + widen * (qh - qm)))
         out[h] = {"low": lo, "mid": mid, "high": hi, "p_up": float((r > 0).mean()), "p_flat": float((r == 0).mean()),
                   "n": len(r)}
     return out
@@ -258,9 +262,10 @@ def _section(sym, a):
                  f'<td>Tk {f["mid"]:,.2f}</td><td>{f["p_up"]:.0%}</td></tr>' for h, f in a.get("forecast", {}).items())
     fc = ('<h3>Price range forecast</h3><div class="wrap"><table><tr><th>In</th><th>80% range</th><th>Middle</th>'
           f'<th>Up in past moves</th></tr>{fc}</table></div><p class="mute">From this share\'s own moves over the last '
-          f'{WINDOW} sessions. On DSE history 2014&ndash;2026 the real price landed inside the 80% range 78&ndash;79% of '
-          'the time, but fell below it twice as often as it rose above it, and in falling years (2018, 2024) only '
-          '61&ndash;72% were inside. A range of likely outcomes, not a prediction of direction.'
+          f'{WINDOW} sessions, moved down {SKEW_SHIFT[5]:.0%} (5 sessions) and {SKEW_SHIFT[20]:.0%} (20 sessions) '
+          'because unshifted ranges missed low twice as often as high. Shifted, on DSE history 2014&ndash;2026 the real '
+          'price landed inside 76&ndash;83% of the time with misses about even, but in falling years (2018, 2024) only '
+          '66&ndash;75%. A range of likely outcomes, not a prediction of direction.'
           + (f' <b>Widened {WIDEN}&times; today:</b> turnover was {a["turnover_ratio"]:.1f}&times; its 20-day average, '
              'and on such days the plain range held the price only ~70% of the time.'
              if a.get("turnover_ratio", 0) >= WIDEN_AT else '') + '</p>') if fc else ""

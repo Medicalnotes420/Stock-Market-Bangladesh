@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from dse_quant.watch import analyze, load_csv, parse_news, render
+from dse_quant.watch import SKEW_SHIFT, analyze, forecast, load_csv, parse_news, render
 
 
 def frame(closes):
@@ -81,6 +81,13 @@ class Watch(unittest.TestCase):
             self.assertLess(f[h]["mid"], f[h]["high"])
         self.assertGreater(f[20]["high"] - f[20]["low"], f[5]["high"] - f[5]["low"])  # wider further out
         self.assertEqual(analyze(frame(np.linspace(10, 20, 40)))["forecast"], {})  # too little history
+
+    def test_forecast_shifted_down(self):
+        closes = pd.Series(np.full(300, 50.0))
+        f = forecast(closes)  # flat history: every past move is 0, so the range collapses onto the shift
+        for h, s in SKEW_SHIFT.items():
+            for k in ("low", "mid", "high"):
+                self.assertAlmostEqual(f[h][k], 50 * np.exp(-s))
 
     def test_volume_vs_20day_average(self):
         df = frame(np.linspace(10, 30, 80))

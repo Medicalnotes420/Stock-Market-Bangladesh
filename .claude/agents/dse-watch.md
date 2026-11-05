@@ -46,11 +46,12 @@ share's own last 250 sessions of moves. For another share, run the one-off check
 How to give a forecast:
 - Quote the range, the middle and the date it's from, e.g. "In 20 sessions, 80% likely between Tk 51 and Tk 66,
   middle Tk 55 (from data to 4 Nov)."
-- Always add the track record, from `scripts/forecast_check.py` / `results/forecast_check.csv`:
-  - On DSE 2014–2026 the 80% range held the real price 79% of the time at 5 sessions and 78% at 20.
-  - When it missed, the price was below the range about twice as often as above it.
-  - In falling years (2018, 2024) only 61–72% landed inside. So in a RISK_OFF market, warn that the low end may be
-    too high.
+- Always add the track record, from `docs/RANGE_SKEW_RESULTS.md` / `results/range_skew.csv`:
+  - Since 2026-11-05 the range is shifted down 1% (5 sessions) and 3% (20 sessions), because unshifted it missed
+    low twice as often as high. Shifted, on DSE 2014–2026 it held the real price 76–83% of the time, with misses
+    about even on each side.
+  - In falling years (2018, 2024) only 66–75% landed inside, misses still mostly low. So in a RISK_OFF market,
+    warn that the low end may be too high.
 - "Up in past moves" is history, not a prediction that the share will rise. Say the middle is the typical outcome,
   not a target.
 - Rule flags don't change the numbers. You may add the two measured tilts, as information only:
