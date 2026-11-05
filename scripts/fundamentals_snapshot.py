@@ -30,7 +30,7 @@ records, failed, no_figures = {}, [], []
 for i, code in enumerate(codes, 1):
     for attempt in (1, 2):
         try:
-            co, items = company_page(code)
+            co, items = company_page(code, need_news=False)
             break
         except (OSError, ValueError) as e:
             co, items, err = None, None, e
@@ -49,4 +49,5 @@ p = save_snapshot(date.today(), records)
 print(f"wrote {p}: {len(records)} companies; {len(no_figures)} pages without company figures; {len(failed)} failed")
 for f in failed:
     print("FAILED", f, file=sys.stderr)
-sys.exit(1 if len(failed) > 0.1 * len(codes) else 0)
+# a layout change shows up as most pages lacking figures, so check the saved count too
+sys.exit(1 if len(failed) > 0.1 * len(codes) or len(records) < 0.7 * len(codes) else 0)

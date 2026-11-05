@@ -130,16 +130,16 @@ def parse_company(html):
     return None
 
 
-def company_page(symbol, timeout=60):
-    """One fetch of a share's dse.com.bd page: (company record or None, news items). Raises if there is no news,
-    which means the page layout changed or the code is wrong."""
+def company_page(symbol, timeout=60, need_news=True):
+    """One fetch of a share's dse.com.bd page: (company record or None, news items). Raises if there is no news
+    and need_news, which means the page layout changed or the code is wrong (some quiet shares truly have none)."""
     req = urllib.request.Request(NEWS_URL.format(urllib.parse.quote(symbol)), headers={"User-Agent": "dse-watch/1"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         html = r.read().decode("utf-8")
-    items = parse_news(html)
-    if not items:
+    items, co = parse_news(html), parse_company(html)
+    if not items and need_news:
         raise ValueError(f"dse.com.bd: no news found on the {symbol} page (layout may have changed)")
-    return parse_company(html), items
+    return co, items
 
 
 def _num(x):
