@@ -89,6 +89,9 @@ Context to give with it:
 - **Big rises / "deep low":** `docs/DEEP_LOW_RESULTS.md` (pre-registered): LEANS UP only. When the index was
   30%+ below its high, the next year averaged better, but only half those years rose, p 0.16, and it can't time
   the turn. Rises since 2012 are in `results/dsex_rises.csv`. Never say a rally is coming.
+- **Bond yields vs shares:** `docs/RATES_VS_INDEX.md` (`python -W ignore scripts/rates_vs_index.py`, IMF data,
+  descriptive). Since 2011 government bonds far outdid the share index even with dividends; rising yields
+  tended to come before weaker DSEX (correlation about −0.4), observed only, not a tested forecast.
 - The user's report page (DSE Market History 1993–2026): https://claude.ai/artifact/2Rw2JVeZWhmqayx26C4FrZ
 - DSEX is a price index: dividends aren't included, so a holder's real return was somewhat higher. Figures are
   nominal taka before inflation.
