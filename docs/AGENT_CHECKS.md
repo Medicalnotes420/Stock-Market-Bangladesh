@@ -44,3 +44,16 @@ Q4–Q9 and cited the lines. Each answer was also fact-checked against the repo 
 - Q1/Q3: misread run.log. The 02:06 run failed (`--asof expected one argument`), but the 02:08 rerun finished, so
   the regime was not stale. Q3 also called it "the 08:00 run"; it ran at 02:08.
 - Q10: "14 of 20 paper runs RISK_OFF" counts only plain RISK_OFF; 16 of 20 counting the variants.
+
+### 2026-11-06, new questions 11-14 (snapshot 2026-11-06)
+**Q12 and Q13 passed; Q11 passed with one slip; Q14 not yet passed.**
+- Q11: no buy/sell, EPS/NAV/yield/loans, dated sector table, "not tested as a forecast" all present. Slip: NAV and
+  the dividend were not labelled with their financial year. Agent wording tightened (not re-run yet).
+- Q12: ran `screen.py --sector Cement`, gave the snapshot date, recommended nothing. Slip: left out "each at its
+  price on the snapshot day". Agent wording tightened (not re-run yet).
+- Q13: institutions 12.75% to 1.07%, sponsors flat at 30.65%, dates given, no names or sell-signal claim.
+- Q14: the agent twice declined to guess because its Read tool needs poppler. `scripts/read_pdf.py` (pypdf) now
+  reads the PDFs (2025 report: emphasis of matter on the Agrani Bank case filed in 2013 and the inventory count),
+  and the agent file points to it, but a running session doesn't reload agent files: re-run Q14, Q11 and Q12
+  in a new session.
+- Running the checks in parallel makes them overwrite `data/watch/one_off.html`; run them one at a time.

@@ -25,11 +25,12 @@ companies. Write for a non-programmer: plain words, taka (Tk) prices, % moves.
   `python scripts/dsex_history.py`, `python scripts/dse_long_run.py`, `python -m unittest discover -s tests -t .`,
   `python scripts/screen.py [--max-pe N --max-pb N --min-yield F --max-de N --sector NAME --financials --top N]`
   (finds shares by fundamentals from the weekly snapshot; say the snapshot date it prints),
+  `python scripts/read_pdf.py FILE [--pages N]` (text of a saved PDF),
   `Get-ScheduledTaskInfo` / `schtasks /Query`. Never run `fundamentals_snapshot.py` (a 10-minute download;
   the morning run takes it weekly); if `screen.py` says there is no snapshot, hand that back.
 - **Auditor's reports**: the one-off check saves any auditor's-opinion PDF linked in the news to
-  `data/watch/auditor/` and lists the path on the page. Read it with the Read tool (pages="1-5") when asked
-  what the auditor said; quote its year and the gist of each qualification or emphasis-of-matter point, nothing
+  `data/watch/auditor/` and lists the path on the page. Read it with `python scripts/read_pdf.py FILE` (not the Read
+  tool: it needs poppler, which isn't installed) when asked what the auditor said; quote its year and the gist of each qualification or emphasis-of-matter point, nothing
   you did not read.
 - Never edit files, change `watchlist.txt` or a scheduled task, commit, install anything, or turn a paper strategy
   on. If the user wants one of those, say exactly what change is needed and hand it back to the main conversation.
@@ -80,7 +81,9 @@ yearly re-check) · §7 the report page · §8 fundamentals and the technical su
 Run the one-off check (hard rules), then read that share's section of `data/watch/one_off.html` and reply in about
 20 lines, under these headings:
 1. **Price**: last close and date, 1/5/20/60/120/240-day moves, 52-week range, volume vs average.
-2. **Fundamentals** (the page's Fundamentals block, `docs/FINDINGS.md` §8): EPS and which year it is, P/E (or
+2. **Fundamentals** (the page's Fundamentals block, `docs/FINDINGS.md` §8): label EPS, NAV and the dividend each
+   with the financial year they belong to (they can differ; the page prints it), and for any screen or sector
+   table say the figures are each share's at its price on the snapshot day. EPS and which year it is, P/E (or
    "loss"), NAV and Price/NAV, ROE, last dividend and yield, payout, loans/equity, the EPS/NAV/profit trend over the
    years, the latest interim quarters, shareholding changes (the page's ⚑ flags). Then **against its sector** (the
    page's table, with its snapshot date): where it ranks on P/E, Price/NAV, yield, ROE, loans/equity. If the page

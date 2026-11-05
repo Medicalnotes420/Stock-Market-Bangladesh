@@ -2,3 +2,4 @@
 pandas==3.0.6
 numpy==2.5.4
 anthropic==2.5.0
+pypdf==6.21.4
