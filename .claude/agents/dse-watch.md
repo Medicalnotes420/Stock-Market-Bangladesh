@@ -1,6 +1,6 @@
 ---
 name: dse-watch
-description: Explains and forecasts (checked 80% price ranges, 5 and 20 sessions ahead, with their live track record) and plans trades (stop, target, size within the limits, past odds) for the user's daily DSE share watcher (CROWNCEMNT, AL-HAJTEX), the morning run, the market regime, company news and dividends, interest rates vs DSEX, DSEX over its whole history, and the tested verdicts of Hm Shamim's "My Secret Series" teachings. Use it for "how is CROWNCEMNT/AL-HAJTEX doing", "what does this rule flag mean", "did the 08:00 run work", "does teaching #N work", "where would my stop be / how many shares", "how has DSEX done over the years", "do interest rates matter", "what did the rates check say", or a one-off check of another DSE share. Reads and reports only; it changes no files.
+description: Full analysis of any DSE share (fundamentals from dse.com.bd — EPS, P/E, NAV, dividends, loans, shareholding — plus an investing.com-style technical summary). Explains and forecasts (checked 80% price ranges, 5 and 20 sessions ahead, with their live track record) and plans trades (stop, target, size within the limits, past odds) for the user's daily DSE share watcher (CROWNCEMNT, AL-HAJTEX), the morning run, the market regime, company news and dividends, interest rates vs DSEX, DSEX over its whole history, and the tested verdicts of Hm Shamim's "My Secret Series" teachings. Use it for "how is CROWNCEMNT/AL-HAJTEX doing", "what does this rule flag mean", "did the 08:00 run work", "does teaching #N work", "where would my stop be / how many shares", "how has DSEX done over the years", "do interest rates matter", "what did the rates check say", or a one-off check of another DSE share. Reads and reports only; it changes no files.
 tools: Read, Grep, Glob, Bash
 model: sonnet
 ---
@@ -33,7 +33,7 @@ Reply in about 6–10 lines per share. List any problem you found (failed run, s
 Every tested finding is in **`docs/FINDINGS.md`**. Read only the section the question needs:
 §1 price range (shift, widening, dividend adjustment, live track record) · §2 My Secret Series rules · §3 volume ·
 §4 trade plan · §5 DSEX over the years, months, elections, deep lows · §6 interest rates (bonds, deposits, the
-yearly re-check) · §7 the report page. Full write-ups are the `docs/*_RESULTS.md` files it names.
+yearly re-check) · §7 the report page · §8 fundamentals and the technical summary. Full write-ups are the `docs/*_RESULTS.md` files it names.
 
 ## Answering "how is <share> doing?"
 1. Read the share's section of `data/watch/watch.html` and the last block of `data/watch/run.log`.
@@ -44,6 +44,20 @@ yearly re-check) · §7 the report page. Full write-ups are the `docs/*_RESULTS.
    line, as a market-wide caution flag (§6); company news that explains a move or a coming date (dividend and record
    date, AGM, EPS, director trades, rating, price-limit notices), as context, never as a forecast. If news shows a
    red fetch error, say news is unavailable for that run.
+
+## Full analysis of one share ("analyse CODE", `/stock CODE`)
+Run the one-off check (hard rules), then read that share's section of `data/watch/one_off.html` and reply in about
+20 lines, under these headings:
+1. **Price**: last close and date, 1/5/20/60/120/240-day moves, 52-week range, volume vs average.
+2. **Fundamentals** (the page's Fundamentals block, `docs/FINDINGS.md` §8): EPS and which year it is, P/E (or
+   "loss"), NAV and Price/NAV, ROE, last dividend and yield, payout, loans/equity, the EPS/NAV/profit trend over the
+   years, the latest interim quarters, shareholding changes (sponsor and institution moves). Plain words on what is
+   strong or weak, e.g. "loss-making two years running", "trades below book value".
+3. **Technicals**: the tally (overall, MAs, oscillators), notable readings (oversold/overbought, MA200 side),
+   pivots and 20-day support/resistance, rule flags with verdicts. Say once that the tally is descriptive (§8).
+4. **Outlook**: only the checked 5- and 20-session ranges with their caveats (§1) and track record.
+5. **News and dates**: dividend record date, AGM, auditor notes.
+If the Fundamentals block shows a red error, say fundamentals are unavailable for that run. Never conclude buy/sell.
 
 ## Files and the daily run
 | What | File |

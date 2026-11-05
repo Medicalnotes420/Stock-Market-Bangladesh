@@ -5,8 +5,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from dse_quant.watch import (SKEW_SHIFT, adjust_for_dividend, analyze, data_warnings, forecast, load_csv, log_forecasts,
-                             parse_news, rates_status, render, score_forecasts, upcoming_dividend)
+from dse_quant.watch import (SKEW_SHIFT, adjust_for_dividend, analyze, data_warnings, forecast, fundamentals, load_csv,
+                             log_forecasts, parse_company, parse_news, rates_status, render, score_forecasts, tech_summary,
+                             upcoming_dividend)
 
 
 def frame(closes):
@@ -140,6 +141,81 @@ class Watch(unittest.TestCase):
             self.assertIn("Dividend &lt;Declaration&gt;", html)
             a["news"] = "news fetch failed: timeout"
             self.assertIn("news fetch failed", Path(render({"X": a}, Path(d) / "w.html")).read_text(encoding="utf-8"))
+
+    def test_company_record_parsed_and_fundamentals(self):
+        import json
+        co = {"code": "X", "name": "X <Ltd>", "sector": "Textile", "category": "B", "marketCap": 1.5e9,
+              "faceValue": 10, "paidUpCapital": 2e8, "freeFloat": 60.0, "authorizedCapital": 500,
+              "reserveWithoutOci": 100.0, "loanStatus": {"shortTerm": 20.0, "longTerm": 180.0},
+              "creditRating": "$undefined", "asOfDate": "2026-11-05", "yearEnd": "June",
+              "multiYearFinancials": [{"year": 2024, "epsBasic": 4.0, "nav": 20.0, "profit": 80, "pe": 12},
+                                      {"year": 2025, "epsBasic": 2.0, "nav": 25.0, "profit": 40, "pe": None}],
+              "interimFinancials": {"periodEnds": {"q1": "202509", "annual": "202606"},
+                                    "rows": [{"metric": "Earnings Per Share (EPS) Basic", "q1": 1.0, "annual": 5.0},
+                                             {"metric": "EPS Diluted*", "q1": None, "annual": None}]},
+              "dividendHistory": [{"year": 2024, "cash": 10, "stock": 0}, {"year": 2025, "cash": 20, "stock": 5}],
+              "sharePattern": [{"date": "Oct 31, 2026", "pattern": {"sponsor": 30.0, "public": 70.0}}]}
+        chunk = json.dumps('5:["$","div",null,{"company":' + json.dumps(co, separators=(",", ":")) + '}]\n')
+        got = parse_company(f'<script>self.__next_f.push([1,{chunk}])</script>')
+        self.assertEqual(got["code"], "X")
+        self.assertIsNone(parse_company("<html></html>"))
+        f = fundamentals(got, 50.0)
+        self.assertEqual(f["eps"], 5.0)  # interim annual (FY to 06/2026) is newer than the FY2025 row
+        self.assertIn("2026", f["eps_when"])
+        self.assertAlmostEqual(f["pe"], 10.0)
+        self.assertAlmostEqual(f["pb"], 2.0)  # NAV from the newest multi-year row
+        self.assertAlmostEqual(f["div_tk"], 2.0)  # 20% of Tk 10 face
+        self.assertAlmostEqual(f["div_yield"], 0.04)
+        self.assertAlmostEqual(f["debt_equity"], 200 / (25 * 2e7 / 1e6))
+        self.assertEqual(f["years"][-1]["div"], "20% cash + 5% stock")
+        self.assertEqual(len(f["interim"]["rows"]), 1)  # all-empty diluted row dropped
+        news = [{"type": "Notice", "body": "recommended 99% cash dividend for the year ended June 30, 2027"},
+                {"type": "Dividend", "body": "The Board has recommended 10% Cash and 5% Stock Dividend for the year "
+                 "ended June 30, 2026. Reported EPS of Tk. (2.85), NAV per share of Tk. 12.50 and NOCFPS ..."}]
+        d = fundamentals(got, 50.0, news)  # Notice ignored; the FY2026 declaration beats the FY2025 rows
+        self.assertEqual((d["div_cash_pct"], d["div_stock_pct"], d["nav"]), (10.0, 5.0, 12.5))
+        self.assertIn("2026", d["nav_when"])
+        self.assertAlmostEqual(d["div_yield"], 1.0 / 50)
+        neg = fundamentals(got, 50.0, [{"type": "Dividend", "body": "recommended No Dividend for the year ended "
+                                        "June 30, 2026. NAV per share of Tk. (3.10)"}])
+        self.assertEqual((neg["div_cash_pct"], neg["nav"], neg["pb"]), (0.0, -3.1, None))
+        old = fundamentals(got, 50.0, [{"type": "Dividend", "body": "recommended 1% cash dividend for the year "
+                                        "ended June 30, 2025. NAV per share of Tk. 1.00"}])
+        self.assertEqual(old["nav"], 25.0)  # not newer than the table: ignored
+        for k in ("multiYearFinancials", "interimFinancials", "dividendHistory", "sharePattern", "loanStatus"):
+            fundamentals({**got, k: "$undefined"}, 50.0)  # DSE's missing-value marker must not crash
+        fundamentals({**got, "interimFinancials": {"periodEnds": "$undefined", "rows": "$undefined"}}, 50.0)
+        loss = fundamentals({**got, "interimFinancials": {}}, 50.0)
+        self.assertEqual(loss["eps"], 2.0)
+        self.assertIsNone(fundamentals({**got, "multiYearFinancials": [{"year": 2025, "epsBasic": -1.0, "nav": 9}],
+                                        "interimFinancials": {}}, 50.0)["pe"])
+        a = analyze(frame(np.linspace(10, 20, 80)))
+        a["fund"] = f
+        html = Path(render({"X": a}, self.tmp / "f.html")).read_text(encoding="utf-8")
+        self.assertIn("Fundamentals", html)
+        self.assertIn("X &lt;Ltd&gt;", html)
+        self.assertIn("Shareholding", html)
+        a["fund"] = "no company figures found"
+        self.assertIn("no company figures found", Path(render({"X": a}, self.tmp / "g.html")).read_text(encoding="utf-8"))
+
+    def test_tech_summary(self):
+        t = analyze(frame(np.linspace(10, 30, 260)))["tech"]
+        self.assertEqual(t["ma_tally"]["reading"], "Strongly bullish")  # steady rise: price above every average
+        self.assertEqual(len(t["ma"]), 12)
+        self.assertEqual(next(o for o in t["osc"] if o["name"] == "RSI(14)")["signal"], "Overbought")
+        p = t["pivots"]
+        self.assertTrue(p["S3"] < p["S2"] < p["S1"] < p["Pivot"] < p["R1"] < p["R2"] < p["R3"])
+        short = analyze(frame(np.linspace(30, 10, 80)))["tech"]  # too short for MA100/200: n/a, not counted
+        self.assertEqual([m["signal"] for m in short["ma"] if m["name"] == "MA200"], ["n/a", "n/a"])
+        self.assertEqual(short["ma_tally"]["reading"], "Strongly bearish")
+        osc = lambda t, n: next(o for o in t["osc"] if o["name"] == n)["signal"]
+        self.assertEqual(osc(tech_summary(frame(np.linspace(10, 12, 20))), "MACD(12,26)"), "n/a")  # too short
+        stuck = frame(np.full(60, 10.0))
+        stuck["high"] = stuck["low"] = stuck["close"]
+        self.assertEqual(osc(tech_summary(stuck), "RSI(14)"), "n/a")  # floor-price freeze is not "Overbought"
+        html = Path(render({"X": analyze(frame(np.linspace(10, 30, 260)))}, self.tmp / "t.html")).read_text(encoding="utf-8")
+        self.assertIn("Technical summary", html)
+        self.assertIn("not a forecast", html)
 
 
 

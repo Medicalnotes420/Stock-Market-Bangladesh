@@ -11,6 +11,20 @@ down = pd.Series(np.linspace(20, 10, 60), idx)
 flat = pd.Series(10.0, idx)
 
 
+class NewIndicators(unittest.TestCase):
+    def test_stoch_cci_atr(self):
+        from dse_quant.indicators import atr, cci, ema, stoch
+        hi, lo = up + 0.5, up - 0.5
+        k, d = stoch(hi, lo, up)
+        self.assertAlmostEqual(k.iloc[-1], 100 * (13 * 10 / 59 + .5) / (13 * 10 / 59 + 1))  # close .5 under the 14-day high
+        self.assertTrue(k.iloc[:13].isna().all())
+        self.assertTrue(stoch(flat, flat, flat)[0].isna().all())  # no range -> undefined, not a divide error
+        self.assertGreater(cci(hi, lo, up).iloc[-1], 0)
+        self.assertLess(cci(down + .5, down - .5, down).iloc[-1], 0)
+        self.assertAlmostEqual(atr(flat + 1, flat - 1, flat).iloc[-1], 2.0)
+        self.assertAlmostEqual(ema(flat, 10).iloc[-1], 10.0)
+
+
 class Indicators(unittest.TestCase):
     def test_rsi_extremes(self):
         self.assertAlmostEqual(rsi(up).iloc[-1], 100.0)

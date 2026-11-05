@@ -104,3 +104,16 @@ lower-limit lock. DSE settles T+2: a days-to-weeks plan, never same-day.
 "DSE Market History 1993–2026": https://claude.ai/artifact/2Rw2JVeZWhmqayx26C4FrZ. Its data files come from
 `python -W ignore scripts/report_data.py` (into `data/report/`); a Claude scheduled task ("Monthly DSE report
 refresh", the 2nd of each month, 10:00) uploads them. It's private unless the user shared it.
+
+## 8. Fundamentals and the technical summary (watch page, added 2026-11-05)
+**Fundamentals** come from the share's public dse.com.bd company page (`dse_quant.watch.fundamentals`): sector,
+category, market cap, EPS, P/E, NAV, Price/NAV, ROE (EPS / NAV), last dividend and yield, payout, loans (Tk mn)
+and loans/equity (equity = NAV × shares, approximate), reserves, a year-by-year EPS/NAV/profit/dividend table,
+the latest interim quarters, and shareholding. DSE fills its yearly table late, so the newest figures win: EPS
+from the interim table's annual column, NAV and dividend from the year-end dividend declaration in the news.
+Not tested as a price forecast; context only. No sector comparison yet (it would need every peer's page).
+
+**Technical summary** is an investing.com-style tally: price above each simple/exponential MA (5–200) reads
+bullish; oscillators use textbook thresholds (RSI 30/70, Stochastic 20/80, Williams %R −80/−20, CCI ±100, ADX
+< 20 = no trend, ROC sign, MACD vs signal); classic pivots from the last session. It is a description of the
+chart, not a forecast: the RSI, MACD and moving-average rules tested in §2 had no forecast power on DSE.

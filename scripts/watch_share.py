@@ -12,8 +12,8 @@ from datetime import date, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from dse_quant.watch import (adjust_for_dividend, analyze, fetch, latest_regime, load_csv, log_forecasts,  # noqa: E402
-                             news, rates_status, render, score_forecasts)
+from dse_quant.watch import (adjust_for_dividend, analyze, company_page, fetch, fundamentals,  # noqa: E402
+                             latest_regime, load_csv, log_forecasts, rates_status, render, score_forecasts)
 
 OUT = Path("data/watch")
 HISTORY_DAYS = 400  # calendar days: ~270 sessions, enough for SMA50 and a 250-session chart
@@ -60,12 +60,19 @@ for s, df in data.items():
     except Exception as e:  # one bad share must not hide the others
         errors.append(f"{s}: analysis failed: {e}")
         continue
-    if not a.csv:  # a news failure is shown in the share's section; it does not fail the run
+    if not a.csv:  # a news/fundamentals failure is shown in the share's section; it does not fail the run
         try:
-            results[s]["news"] = news(s)
+            co, results[s]["news"] = company_page(s)
             adjust_for_dividend(results[s], results[s]["news"])
         except (OSError, ValueError, KeyError) as e:
-            results[s]["news"] = f"news fetch from dse.com.bd failed: {e}"
+            co, results[s]["news"] = None, f"news fetch from dse.com.bd failed: {e}"
+        try:
+            news_items = results[s]["news"] if isinstance(results[s]["news"], list) else []
+            results[s]["fund"] = (fundamentals(co, results[s]["close"], news_items) if co else
+                                  "no company figures found on the dse.com.bd page (layout may have changed)")
+        except Exception as e:  # an odd company record must not stop the other shares or the page
+
+            results[s]["fund"] = f"reading company figures from dse.com.bd failed: {e}"
 
 if not a.csv and results:  # fetched shares keep a track record; one-off checks in their own log
     src = "one-off" if a.symbols else "watchlist"
