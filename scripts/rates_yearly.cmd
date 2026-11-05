@@ -8,4 +8,5 @@ if not exist data\rates mkdir data\rates
 set PY=C:\Python315\python.exe
 echo ==== %date% %time% >> data\rates\rates_check.log
 %PY% -W ignore scripts\rates_vs_index.py --refresh >> data\rates\rates_check.log 2>&1 && ^
-%PY% -W ignore scripts\rates_signal.py >> data\rates\rates_check.log 2>&1 || echo RATES CHECK FAILED, see above >> data\rates\rates_check.log
+%PY% -W ignore scripts\rates_signal.py >> data\rates\rates_check.log 2>&1 && ^
+%PY% -W ignore scripts\deposit_rates.py >> data\rates\rates_check.log 2>&1 || echo RATES CHECK FAILED, see above >> data\rates\rates_check.log
