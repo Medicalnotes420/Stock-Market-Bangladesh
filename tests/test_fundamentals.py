@@ -22,6 +22,13 @@ RECS = {"A": rec("A", "Cement", 50, 5, 50),      # P/E 10, P/NAV 1.0, yield 2%
 
 
 class Fundamentals(unittest.TestCase):
+    def test_eps_stale(self):
+        from dse_quant.fundamentals import eps_stale
+        self.assertTrue(eps_stale("FY2025", "June", "2026-11-06"))  # ended 30 Jun 2025, 494 days
+        self.assertFalse(eps_stale("FY2025", "December", "2026-11-06"))  # ended 31 Dec 2025, 311 days
+        self.assertFalse(eps_stale("year to 06/2026 (interim report)", "June", "2026-11-06"))
+        self.assertFalse(eps_stale("FY2025", None, "2026-11-06"))
+
     def test_table_sector_and_screen(self):
         tab = table(RECS)
         self.assertEqual(sorted(tab.index), ["A", "B", "C", "D"])

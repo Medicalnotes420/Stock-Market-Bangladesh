@@ -694,7 +694,7 @@ def _score_note(a):
         return ('<p class="mute">Track record: one-off checks save their ranges to data/watch/one_off_forecast_log.csv;'
                 ' none for this share has reached its end date yet. Check it again after 5 sessions for a first score.'
                 '</p>' if one_off else
-                '<p class="mute">Track record: this page started saving its ranges on 2026-11-05; none has reached '
+                '<p class="mute">Track record: the saved ranges here start with the 2026-11-04 session; none has reached '
                 'its end date yet.</p>')
     parts = [f'{h} sessions: {v["inside"]} of {v["checked"]} inside ({v["inside"] / v["checked"]:.0%}), '
              f'{v["below"]} below, {v["above"]} above' for h, v in sorted(sc.items()) if v["checked"]]

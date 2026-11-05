@@ -16,7 +16,7 @@ KEEP = ("code", "name", "sector", "category", "board", "price", "marketCap", "fa
         "freeFloat", "authorizedCapital", "reserveWithoutOci", "loanStatus", "listingYear", "yearEnd", "agmDate",
         "asOfDate", "multiYearFinancials", "interimFinancials", "dividendHistory", "sharePattern")
 # sectors the user does not follow; the screener leaves them out unless asked
-FINANCIAL = ("Bank", "Financial Institutions", "Insurance", "Mutual Funds", "Corporate Bond", "Treasury Bond")
+FINANCIAL = ("Bank", "Financial In", "Insurance", "MutFund", "CorpBond")  # the snapshot's own sector labels
 METRICS = {"pe": True, "pb": True, "div_yield": False, "roe": False, "debt_equity": True}  # True: lower ranks first
 
 
@@ -57,9 +57,20 @@ def table(records):
         except Exception:  # one odd record must not sink the table
             continue
         rows.append({"code": code, "sector": r.get("sector"), "category": r.get("category"), "price": float(price),
-                     "market_cap_mn": f["market_cap_mn"], "eps": f["eps"], "nav": f["nav"],
+                     "eps_when": f["eps_when"], "year_end": f["year_end"], "market_cap_mn": f["market_cap_mn"], "eps": f["eps"], "nav": f["nav"],
                      **{k: f[k] for k in METRICS}, "div_cash_pct": f["div_cash_pct"]})
     return pd.DataFrame(rows).set_index("code") if rows else pd.DataFrame()
+
+
+def eps_stale(eps_when, year_end, day):
+    """True when an 'FY2025'-style EPS period ended over 365 days before `day` (its year-end month, e.g. June)."""
+    import calendar
+    import datetime
+    if not str(eps_when).startswith("FY") or year_end not in list(calendar.month_name)[1:]:
+        return False
+    y, m = int(str(eps_when)[2:6]), list(calendar.month_name).index(year_end)
+    end = datetime.date(y, m, calendar.monthrange(y, m)[1])
+    return (datetime.date.fromisoformat(str(day)) - end).days > 365
 
 
 def sector_view(tab, code, day):

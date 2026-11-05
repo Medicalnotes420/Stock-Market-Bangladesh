@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from dse_quant.fundamentals import latest_snapshot, screen, table  # noqa: E402
+from dse_quant.fundamentals import eps_stale, latest_snapshot, screen, table  # noqa: E402
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--max-pe", type=float)
@@ -35,9 +35,12 @@ if hits.empty:
     if a.sector and not (tab.sector.str.lower() == a.sector.lower()).any():
         print("no such sector; sectors are:", ", ".join(sorted(tab.sector.dropna().unique())))
     sys.exit(0)
-out = hits.head(a.top)[["sector", "price", "eps", "pe", "nav", "pb", "div_yield", "debt_equity", "roe"]].copy()
+out = hits.head(a.top)[["sector", "category", "price", "eps", "eps_when", "year_end", "pe", "nav", "pb", "div_yield", "debt_equity", "roe"]].copy()
+out.insert(5, "stale", ["STALE" if eps_stale(w, y, day) else "" for w, y in zip(out.eps_when, out.year_end)])
+out = out.drop(columns="year_end")
 for c, fmt in (("pe", "{:.1f}"), ("pb", "{:.2f}"), ("debt_equity", "{:.2f}"), ("div_yield", "{:.1%}"), ("roe", "{:.1%}"),
                ("eps", "{:.2f}"), ("nav", "{:.2f}"), ("price", "{:,.1f}")):
     out[c] = out[c].map(lambda v: "n/a" if v is None or v != v else fmt.format(v))
 print(out.to_string())
-print("P/E n/a = loss or no EPS. Figures from dse.com.bd; context, not a recommendation.")
+print("P/E n/a = loss or no EPS. eps_when = the period of that EPS: STALE = that EPS year ended over a year before the snapshot; category Z = DSE's junk board.")
+print(f"Each figure is at the share's price on {day}. From dse.com.bd; context, not a recommendation.")

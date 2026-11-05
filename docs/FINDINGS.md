@@ -90,7 +90,9 @@ lower-limit lock. DSE settles T+2: a days-to-weeks plan, never same-day.
 - **Rising bond yields → weaker DSEX** (`docs/RATES_SIGNAL_RESULTS.md`, pre-registered): **WEAK**. Negative in
   every slice, p 0.063, mostly from 2020 on.
 - **Deposit rates** (`docs/DEPOSIT_RATES_RESULTS.md`, pre-registered): **WEAK** for both "move together" and
-  "predicts", but negative in every cut (both eras, without floor, without 2020–21); shares don't move rates
+  "predicts" (bar p < 0.0125; same year p 0.030, same 6 months p 0.058, past 6 → next 6 months p 0.025, all
+  negative; the bond-yield p 0.063 above is a different test), negative in every cut (both eras, without floor,
+  without 2020–21); shares don't move rates
   first; most of it is the rate cycle shared with bond yields. The IMF "deposit rate" tracks fixed-deposit rates,
   not Bangladesh Bank's weighted average (~6.3% in 2025).
 - The watch page's top line shows the latest bond and deposit rates and their 6-month change (from
