@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from dse_quant.watch import analyze, load_csv, render
+from dse_quant.watch import analyze, load_csv, parse_news, render
 
 
 def frame(closes):
@@ -112,6 +112,26 @@ class Watch(unittest.TestCase):
         self.assertNotIn("<script>", html)
         self.assertNotIn("<img", html)
         self.assertIn("&lt;script&gt;", html)
+
+    def test_news_parsed_from_page_payload_and_rendered(self):
+        import json
+        items = [{"id": "2", "type": "Dividend", "date": "27 Oct 2026", "summary": "Dividend <Declaration>",
+                  "body": 'Board recommended 22.50% "cash"'},
+                 {"id": "1", "type": "Financials", "date": "13 Nov 2025", "summary": "Q1 Financials", "body": "$13"}]
+        chunk = json.dumps('5:["$","div",null,{"news":' + json.dumps(items, separators=(",", ":")) + '}]\n')  # compact, as the site sends
+        page = f'<script>self.__next_f.push([1,{chunk}])</script>'
+        got = parse_news(page)
+        self.assertEqual([x["summary"] for x in got], ["Dividend <Declaration>", "Q1 Financials"])
+        self.assertEqual(got[1]["body"], "")  # payload reference dropped, summary kept
+        self.assertEqual(parse_news("<html></html>"), [])
+        a = analyze(frame(np.linspace(10, 20, 80)))
+        with tempfile.TemporaryDirectory() as d:
+            a["news"] = got
+            html = Path(render({"X": a}, Path(d) / "w.html")).read_text(encoding="utf-8")
+            self.assertIn("Company news", html)
+            self.assertIn("Dividend &lt;Declaration&gt;", html)
+            a["news"] = "news fetch failed: timeout"
+            self.assertIn("news fetch failed", Path(render({"X": a}, Path(d) / "w.html")).read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

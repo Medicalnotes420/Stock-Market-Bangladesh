@@ -3,6 +3,7 @@
 Descriptive only: trend, indicators and rule alerts on the data given. Not investment advice."""
 import json
 import re
+import urllib.parse
 import urllib.request
 from html import escape
 from pathlib import Path
@@ -93,6 +94,33 @@ def instruments():
     if not rows or "code" not in rows[0]:
         raise ValueError(f"stocknow: unexpected instruments reply {str(data)[:200]}")
     return pd.DataFrame(rows)
+
+
+NEWS_URL = "https://www.dse.com.bd/company/{}"
+
+
+def parse_news(html):
+    """Company news items embedded in a dse.com.bd company page, newest first: dicts of id, type (Notice, Dividend,
+    Financials, Rating), date ('02 Nov 2026'), summary, body. The page is a Next.js app that carries its data as
+    JSON strings in self.__next_f.push([1,"..."]) scripts; there is no documented API."""
+    text = "".join(json.loads(m) for m in re.findall(r'self\.__next_f\.push\(\[1,("(?:[^"\\]|\\.)*")\]\)', html))
+    dec, items = json.JSONDecoder(), []
+    for m in re.finditer(r'\{"id":"\d+","type":"', text):
+        o = dec.raw_decode(text, m.start())[0]
+        if o["body"].startswith("$"):  # shortcut: long bodies sit in a separate payload row; summary only for those
+            o["body"] = ""
+        items.append(o)
+    return items
+
+
+def news(symbol, timeout=60):
+    """Latest company news for one DSE share from its dse.com.bd page (see parse_news)."""
+    req = urllib.request.Request(NEWS_URL.format(urllib.parse.quote(symbol)), headers={"User-Agent": "dse-watch/1"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        items = parse_news(r.read().decode("utf-8"))
+    if not items:
+        raise ValueError(f"dse.com.bd: no news found on the {symbol} page (layout may have changed)")
+    return items
 
 
 def fetch(symbols, start, end, adjusted=True):
@@ -258,7 +286,20 @@ def _section(sym, a):
             f'<g transform="translate(0,0)">{bars}</g></svg>'
             + _svg([(s.macd, "a"), (s.signal, "b")], 100, guides=(0,), label=f"{sym} MACD lines")
             + f'<div class="wrap"><table><tr><th>Rule</th><th>Fired</th><th>Value</th><th>Date</th></tr>{rows}'
-            f'</table></div>{fc}{sec}</section>')
+            f'</table></div>{fc}{sec}{_news(a)}</section>')
+
+
+def _news(a, n=6):
+    if "news" not in a:
+        return ""
+    if isinstance(a["news"], str):  # fetch error message
+        return f'<h3>Company news</h3><p class="bad">⚠ {escape(a["news"])}</p>'
+    rows = "".join(f'<tr><td>{escape(x["date"])}</td><td>{escape(x["type"])}</td><td style="white-space:normal">'
+                   f'<b>{escape(x["summary"])}</b>{"<br>" + escape(x["body"][:400]) if x["body"] else ""}</td></tr>'
+                   for x in a["news"][:n])
+    return ('<h3>Company news</h3><div class="wrap"><table><tr><th>Date</th><th>Type</th><th>News</th></tr>'
+            f'{rows}</table></div><p class="mute">Latest {n} items from dse.com.bd. Context only: news was not '
+            'tested as a price forecast.</p>')
 
 
 PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">

@@ -1,6 +1,6 @@
 ---
 name: dse-watch
-description: Explains and forecasts (as checked 80% price ranges, 5 and 20 sessions ahead) the user's daily DSE share watcher (CROWNCEMNT, AL-HAJTEX), the morning run, the market regime and the tested verdicts of Hm Shamim's "My Secret Series" teachings. Use it for "how is CROWNCEMNT/AL-HAJTEX doing", "what does this rule flag mean", "did the 08:00 run work", "does teaching #N work", or a one-off check of another DSE share. Reads and reports only; it changes no files.
+description: Explains and forecasts (as checked 80% price ranges, 5 and 20 sessions ahead) the user's daily DSE share watcher (CROWNCEMNT, AL-HAJTEX), the morning run, the market regime, each share's DSE company news (dividends, record dates, EPS, director trades) and the tested verdicts of Hm Shamim's "My Secret Series" teachings. Use it for "how is CROWNCEMNT/AL-HAJTEX doing", "what does this rule flag mean", "did the 08:00 run work", "does teaching #N work", or a one-off check of another DSE share. Reads and reports only; it changes no files.
 tools: Read, Grep, Glob, Bash
 model: sonnet
 ---
@@ -76,7 +76,9 @@ stocknow only exports finished days). It runs `scripts/watch_daily.cmd`:
    The full market is fetched only for regime and breadth. The user sees just their 2 shares.
 2. `scripts/build_clean.py` (~1 min): rebuilds `data/clean/`.
 3. `scripts/paper_run.py --asof <yesterday>`: regime, risk gate, status page. No strategy is enabled (S67 stopped 2026-11-05).
-4. `scripts/watch_share.py`: the watch page.
+4. `scripts/watch_share.py`: the watch page, including each share's company news, read from its
+   `https://www.dse.com.bd/company/<CODE>` page (`dse_quant.watch.news`). There is no documented API, so a site
+   redesign can break it; a news failure shows in the share's section and does not fail the run.
 If 1–3 fail, the log says `DATA PIPELINE FAILED` and step 4 still runs. To re-run by hand: `scripts\watch_daily.cmd`.
 Task state: `Get-ScheduledTaskInfo -TaskName "DSE Share Watch"` (PowerShell).
 
@@ -100,6 +102,11 @@ Known limits:
    - each rule flag with its verdict from the table below
    - the market regime
    - the 5- and 20-session price ranges, with the track-record caveat
+   - company news: the "Company news" table (latest 6 items from dse.com.bd). Mention anything that explains a
+     price move or a coming date: dividend and record date (the price usually drops by about the dividend on the
+     record date, and trading is suspended that day), AGM, quarterly EPS, director buy/sell/transfer, credit rating,
+     price-limit notices. News is context, not a forecast: it was never tested as one, so never say it will move
+     the price. If the table shows a red fetch error, say news is unavailable for that run.
 4. Optional: open the page in the browser pane for the chart.
 
 ## What the tests found (2014 to Nov 2026)

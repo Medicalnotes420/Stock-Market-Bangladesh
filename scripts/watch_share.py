@@ -12,7 +12,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from dse_quant.watch import analyze, fetch, latest_regime, load_csv, render  # noqa: E402
+from dse_quant.watch import analyze, fetch, latest_regime, load_csv, news, render  # noqa: E402
 
 OUT = Path("data/watch")
 HISTORY_DAYS = 400  # calendar days: ~270 sessions, enough for SMA50 and a 250-session chart
@@ -58,6 +58,12 @@ for s, df in data.items():
         results[s] = analyze(df, a.above, a.below)
     except Exception as e:  # one bad share must not hide the others
         errors.append(f"{s}: analysis failed: {e}")
+        continue
+    if not a.csv:  # a news failure is shown in the share's section; it does not fail the run
+        try:
+            results[s]["news"] = news(s)
+        except (OSError, ValueError, KeyError) as e:
+            results[s]["news"] = f"news fetch from dse.com.bd failed: {e}"
 
 render(results, a.out, note, errors, latest_regime())
 for s, r in results.items():
