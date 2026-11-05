@@ -38,6 +38,26 @@ def drawdowns(s, min_depth=DD_MIN):
                          for a, p, b, t, r in out])
 
 
+def rises(s, swing=0.15):
+    """Rises between turning points: a low counts once DSEX is `swing` above it, a high once it is `swing`
+    below it. The last rise may still be running (to the latest close)."""
+    hi_d, hi = lo_d, lo = s.index[0], s.iloc[0]
+    mode, piv = None, []
+    for d, v in s.items():
+        if v > hi:
+            hi_d, hi = d, v
+        if v < lo:
+            lo_d, lo = d, v
+        if mode != "down" and v <= hi * (1 - swing):
+            piv.append(("top", hi_d, hi)); mode = "down"; lo_d, lo = d, v
+        elif mode != "up" and v >= lo * (1 + swing):
+            piv.append(("bottom", lo_d, lo)); mode = "up"; hi_d, hi = d, v
+    piv.append(("last", s.index[-1], s.iloc[-1]))
+    return pd.DataFrame([{"low_date": a, "low": x, "high_date": b, "high": y, "rise": y / x - 1,
+                          "sessions": int(((s.index > a) & (s.index <= b)).sum()), "running": k2 == "last"}
+                         for (k1, a, x), (k2, b, y) in zip(piv, piv[1:]) if k1 == "bottom"])
+
+
 def years(m):
     s = m.dsex
     r = np.log(s).diff()
@@ -61,6 +81,7 @@ if __name__ == "__main__":
     Path("results").mkdir(exist_ok=True)
     Y.to_csv("results/dsex_years.csv", index=False)
     D.to_csv("results/dsex_drawdowns.csv", index=False)
+    rises(m.dsex).to_csv("results/dsex_rises.csv", index=False)
     s = m.dsex
     yrs = (s.index[-1] - s.index[0]).days / 365.25
     full = Y[~Y.partial & (Y.year < s.index[-1].year)]

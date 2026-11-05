@@ -86,6 +86,9 @@ Context to give with it:
   year's return doesn't predict this year's. The likely reason for March/October is dividend record dates
   (DSEX is prices only), not tested, so never present it as a chance to sell and buy back. Elections and pay
   scales: too few to show a pattern; quote the table as what happened, nothing more.
+- **Big rises / "deep low":** `docs/DEEP_LOW_RESULTS.md` (pre-registered): LEANS UP only. When the index was
+  30%+ below its high, the next year averaged better, but only half those years rose, p 0.16, and it can't time
+  the turn. Rises since 2012 are in `results/dsex_rises.csv`. Never say a rally is coming.
 - The user's report page (DSE Market History 1993–2026): https://claude.ai/artifact/2Rw2JVeZWhmqayx26C4FrZ
 - DSEX is a price index: dividends aren't included, so a holder's real return was somewhat higher. Figures are
   nominal taka before inflation.
