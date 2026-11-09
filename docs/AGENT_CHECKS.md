@@ -184,3 +184,14 @@ questions", wording unchanged. New MUSTs: check 2 at most 20 lines, check 11 at 
   that file ends at 5,341.63 while DSEX is 5,392.82 (about +10.8%): stale file, not a misquote; the answer should say
   which date the figure runs to.
 - Open: task Last Result -2147020576 (9:56 AM, 9 Nov) still unexplained; data a session behind until the 8:00 run.
+
+### 2026-11-10, Q2 and Q11 re-run after the length-cap wording (00cffb2)
+**Content MUSTs still hold; both still fail the length MUSTs.** Q2 about 40 lines (limit 20, was about 50); Q11 about 75
+(limit 30, was about 80). The agent ignored the new wording: Q2 still had volume vs average, the shareholding change and
+a "Dates and results" block; Q11 still had the sector table, EPS history, three rule flags and a long news block.
+- Wording alone does not hold a line cap here. Fix by code, committed 6e1c308 and **not re-run**:
+  `scripts/short_answer.py CODE [--oneoff] [--stock]` prints the finished status / fundamentals lines from
+  `facts.json` or `one_off_facts.json` (max 9 / 12 lines, test in `tests/test_short_answer.py`); the agent file tells it
+  to quote them, the guard allows the script. Daily `facts.json` has no price fields for AL-HAJTEX until the next
+  morning run, so Q2 needs the one-off check and `--oneoff` until then.
+- Next full run: check Q2 at most 20 lines and Q11 at most 30 with the script in use.
