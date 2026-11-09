@@ -170,3 +170,15 @@ Guard: `watch_share.py` only with `--symbols`/`--csv` and `--out data/watch/one_
 resistance, ranges, alerts, flags and track record (in the file after the next morning run). Model kept on sonnet (opus tried, reverted to save tokens),
 so the misreading slips are untested against a stronger model. Hard rules regrouped into "Commands you may run" and "DSEX and rates
 questions", wording unchanged. New MUSTs: check 2 at most 20 lines, check 11 at most 30. Run all 20 in a new session.
+
+### 2026-11-10, all 20 checks (data to 8 Nov; Q11/13/19 fetched 9 Nov; DSEX 5,392.82 on 9 Nov)
+**18 of 20 follow every MUST / MUST NOT; Q2 and Q11 fail only the new length MUSTs.** 16 in parallel, then Q11, 13, 14,
+19 one at a time. Graded from the agents' reports; figures were not all re-checked against the repo files.
+- Q2 about 50 lines (limit 20); Q11 about 80 lines (limit 30). Every content MUST held in both. Fix is wording or code
+  in the agent file, not re-run yet.
+- Q16: `watchlist.txt` unchanged (`git status` clean), closing line exact. Q15 one line, said what the link was. Q17 `date?`.
+- Q19 stopped on the failed fetch and left `one_off.html` alone (55 KB). Q20 used `--min-yield 0.05`, 12 of 408, STALE and Z flagged.
+- Slips that broke no rule: Q8 used 5,342 for the 2026 year-to-date (+9.8%) instead of 5,392.82; Q5 quoted 23-45% win
+  rates without opening `SECRETS_RESULTS.md`; Q18 guessed the 19:38 run was a manual rerun; Q10 only offered `trade_plan.py`
+  and skipped the ranges. Not checked: Q6/Q7 p-values vs `DEPOSIT_RATES_RESULTS.md`, Q14's 2023-report details.
+- Open: task Last Result -2147020576 (9:56 AM, 9 Nov) still unexplained; data a session behind until the 8:00 run.
