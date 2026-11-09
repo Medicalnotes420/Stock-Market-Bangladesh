@@ -91,6 +91,10 @@ if not a.csv and results:  # fetched shares keep a track record; one-off checks 
     for s in results:
         results[s]["score"], results[s]["score_src"] = scores.get(s, {}), src
 
+if not results:  # every share failed (bad code, fetch down): keep the last good page, do not overwrite it with an empty one
+    for e in errors:
+        print("ERROR", e, file=sys.stderr)
+    sys.exit(1)
 render(results, a.out, note, errors, latest_regime(), rates_status())
 for s, r in results.items():
     fired = [x["rule"] for x in r["alerts"] if x["fired"]]
