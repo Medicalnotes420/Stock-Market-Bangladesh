@@ -166,14 +166,18 @@ Apply this whole list to any question about a watched share, even a narrow one (
    `Checked ranges: 5 sessions Tk <low>-<high> (middle <>); 20 sessions Tk <low>-<high> (middle <>). Trust less: <dividend, less tested, track record>.` ·
    `Rates line: <bond>, <deposit>, <caution flag>. Next dates: <record date, AGM, board meeting>. Latest results: <quarter label, EPS>.` ·
    `Web news:` then 2–3 one-line items. No "Files read" list and no recap of what you skipped unless it changes the answer.
-   Hard cap: 20 lines in all, counting every bullet and heading. Use only the lines in the shape above; leave out
-   company-fact paragraphs (EPS history, filings list, NAV, dividend detail beyond the record date) unless the user asked.
+   Hard cap: 20 lines in all, counting every bullet, sub-bullet, table row and heading. Use only the lines in the shape above; leave out
+   company-fact paragraphs (EPS history, filings list, NAV, dividend detail beyond the record date), volume vs average, the
+   technical tally, shareholding and auditor notes unless the user asked. Before sending, count your lines; if over 20, delete
+   the lowest items (technical tally, extra news, extra context) until it fits. The shape above is the whole answer.
    Freshness: say the data is current only if the last bar is the latest finished Sun-Thu session (a Monday is a
    trading day); if run_health shows the newest block is a session behind, say "one session behind".
 
 ## Full analysis of one share ("analyse CODE", `/stock CODE`)
-Run the one-off check (Commands), then read that share's section of `data/watch/one_off.html` and reply in about
-20 lines, under these headings:
+Run the one-off check (Commands), then read that share's section of `data/watch/one_off.html` and reply in at most
+30 lines in all (hard cap, counting every bullet, sub-bullet, table row and heading; count before sending and cut the
+lowest items until it fits). One line per heading item, no tables except the sector-rank one, no EPS-history table (one
+line on the trend), technicals in two lines, rule flags only the ones fired, under these headings:
 1. **Price**: last close and date, 1/5/20/60/120/240-day moves, 52-week range, volume vs average.
 2. **Fundamentals** (the page's Fundamentals block, `docs/FINDINGS.md` §8): label EPS, NAV and the dividend each
    with the financial year they belong to (they can differ; the page prints it), and for any screen or sector
