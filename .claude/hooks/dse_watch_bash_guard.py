@@ -6,7 +6,7 @@ import re
 import sys
 
 ALLOWED = [
-    r"python scripts/(watch_share|trade_plan|screen|read_pdf)\.py( .*)?",
+    r"python scripts/(watch_share|trade_plan|screen|read_pdf|run_health)\.py( .*)?",
     r"python -m unittest discover -s tests -t \.",
     r'(MSYS_NO_PATHCONV=1 )?schtasks /Query /TN "DSE Share Watch" /V /FO LIST',
     r"(ls|cat|head|tail|wc|grep|rg|date|pwd)( .*)?",

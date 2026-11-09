@@ -14,7 +14,7 @@ class GuardTest(unittest.TestCase):
                   'python scripts/watch_share.py --symbols CROWNCEMNT --out data/watch/one_off.html',
                   'python scripts/read_pdf.py data/watch/auditor/AL-HAJTEX25.pdf --pages 2',
                   'MSYS_NO_PATHCONV=1 schtasks /Query /TN "DSE Share Watch" /V /FO LIST',
-                  'python -m unittest discover -s tests -t .',
+                  'python scripts/run_health.py', 'python -m unittest discover -s tests -t .',
                   'tail -40 data/watch/run.log', 'git diff --stat watchlist.txt',
                   'python scripts/screen.py --max-pe 10 2>&1 | head -20']:
             self.assertTrue(guard.allowed(c), c)

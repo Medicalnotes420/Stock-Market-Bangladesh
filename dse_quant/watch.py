@@ -746,6 +746,52 @@ def latest_regime(journal="data/paper/journal.jsonl"):
         return None
 
 
+MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def quarter_label(year_end, period_end):
+    """Fiscal-quarter name for an interim period end. year_end: month name ('June'); period_end: 'YYYYMM'.
+    Year end June, period 202609 -> 'Q1 (Jul-Sep 2026)': a June year end makes Jul-Sep Q1, Jan-Mar Q3."""
+    try:
+        ye = MONTHS.index(str(year_end)[:3].title()) + 1
+        y, m = int(period_end[:4]), int(period_end[4:])
+    except (ValueError, TypeError, IndexError):
+        return None
+    q = ((m - ye - 1) % 12) // 3 + 1
+    first = (m - 3) % 12  # 0-based index of the quarter's first month
+    return f"Q{q} ({MONTHS[first]}-{MONTHS[m - 1]} {y})"
+
+
+def facts_for(df, a):
+    """The figures the dse-watch agent used to rebuild by hand (and sometimes mixed up between shares): turnover,
+    next dividend, latest quarter, EPS/NAV with their years. Plain numbers and labels, written to facts.json."""
+    f = a.get("fund") if isinstance(a.get("fund"), dict) else {}
+    med = float((df.close * df.volume).iloc[-60:].median())
+    out = {"bar_date": a["date"], "close": a["close"], "median_turnover_60d_mn": round(med / 1e6, 1),
+           "tested_shares_min_turnover_mn": 20, "dividend_ahead": None, "latest_quarter": None,
+           # DSE's own results filings, newest first, so a claim like "Q3 EPS up 300%" is checked against them
+           "recent_results_filings": [{"date": x.get("date"), "summary": x.get("summary")}
+                                      for x in (a["news"] if isinstance(a.get("news"), list) else [])
+                                      if x.get("type") == "Financials"][:4]}
+    d = a.get("dividend")
+    if d:
+        out["dividend_ahead"] = {"cash_pct": d["pct"], "tk_per_share": d["tk"], "record_date": f'{d["record"]:%Y-%m-%d}',
+                                 "sessions_away": d["sessions"], "range_lowered_pct": round(d["drop"] * 100, 1)}
+    if f:
+        out.update({"year_end": f.get("year_end"), "eps": f.get("eps"), "eps_period": f.get("eps_when"),
+                    "nav": f.get("nav"), "nav_period": f.get("nav_when"), "pe": f.get("pe"), "pb": f.get("pb")})
+        ends = (f.get("interim") or {}).get("ends") or {}
+        row = next((r for r in (f.get("interim") or {}).get("rows", [])
+                    if str(r.get("metric", "")).startswith("Earnings Per Share (EPS) Basic")), {})
+        for k in ("annual", "nine", "q3", "half", "q2", "q1"):  # newest period that has an EPS
+            if ends.get(k) and _num(row.get(k)) is not None:
+                label = quarter_label(f.get("year_end"), ends[k]) if k in ("q1", "q2", "q3") else None
+                out["latest_quarter"] = {"period": k, "period_end": ends[k], "fiscal_quarter": label,
+                                         "eps": row[k]}
+                break
+    return out
+
+
 LOG_COLS = ["made_on", "symbol", "h", "low", "mid", "high", "close"]
 
 

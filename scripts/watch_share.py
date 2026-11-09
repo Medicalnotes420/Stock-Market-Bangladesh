@@ -7,14 +7,15 @@
 
 Fetched bars are saved as data/watch/<SYMBOL>.csv. Exit code 1 if any share failed."""
 import argparse
+import json
 import sys
 from datetime import date, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dse_quant.fundamentals import latest_snapshot, sector_view, table  # noqa: E402
-from dse_quant.watch import (adjust_for_dividend, analyze, company_page, fetch, fundamentals,  # noqa: E402
-                             latest_regime, load_csv, log_forecasts, rates_status, render, save_auditor_pdfs,
+from dse_quant.watch import (adjust_for_dividend, analyze, company_page, facts_for, fetch,  # noqa: E402
+                             fundamentals, latest_regime, load_csv, log_forecasts, rates_status, render, save_auditor_pdfs,
                              score_forecasts)
 
 OUT = Path("data/watch")
@@ -95,6 +96,10 @@ if not results:  # every share failed (bad code, fetch down): keep the last good
     for e in errors:
         print("ERROR", e, file=sys.stderr)
     sys.exit(1)
+if not a.csv:  # per-share facts for the dse-watch agent to quote (one-off checks in their own file)
+    (OUT / ("one_off_facts.json" if a.symbols else "facts.json")).write_text(json.dumps(
+        {"built": f"{date.today():%Y-%m-%d}", "shares": {s: facts_for(data[s], r) for s, r in results.items()}},
+        indent=1, default=str))
 render(results, a.out, note, errors, latest_regime(), rates_status())
 for s, r in results.items():
     fired = [x["rule"] for x in r["alerts"] if x["fired"]]
