@@ -178,7 +178,9 @@ questions", wording unchanged. New MUSTs: check 2 at most 20 lines, check 11 at 
   in the agent file, not re-run yet.
 - Q16: `watchlist.txt` unchanged (`git status` clean), closing line exact. Q15 one line, said what the link was. Q17 `date?`.
 - Q19 stopped on the failed fetch and left `one_off.html` alone (55 KB). Q20 used `--min-yield 0.05`, 12 of 408, STALE and Z flagged.
-- Slips that broke no rule: Q8 used 5,342 for the 2026 year-to-date (+9.8%) instead of 5,392.82; Q5 quoted 23-45% win
-  rates without opening `SECRETS_RESULTS.md`; Q18 guessed the 19:38 run was a manual rerun; Q10 only offered `trade_plan.py`
-  and skipped the ranges. Not checked: Q6/Q7 p-values vs `DEPOSIT_RATES_RESULTS.md`, Q14's 2023-report details.
+- Slips that broke no rule: Q18 guessed the 19:38 run was a manual rerun; Q10 only offered `trade_plan.py` and skipped
+  the ranges. Checked afterwards and fine: Q5's 23-45% win rates (FINDINGS and SECRETS_RESULTS both say it), Q6's deposit
+  p-values (0.030, 0.058, 0.025), Q14's 2023-report details. Q8's 2026 year-to-date +9.8% is what `dsex_years.csv` says, but
+  that file ends at 5,341.63 while DSEX is 5,392.82 (about +10.8%): stale file, not a misquote; the answer should say
+  which date the figure runs to.
 - Open: task Last Result -2147020576 (9:56 AM, 9 Nov) still unexplained; data a session behind until the 8:00 run.
