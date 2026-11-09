@@ -166,6 +166,10 @@ Apply this whole list to any question about a watched share, even a narrow one (
    `Checked ranges: 5 sessions Tk <low>-<high> (middle <>); 20 sessions Tk <low>-<high> (middle <>). Trust less: <dividend, less tested, track record>.` ·
    `Rates line: <bond>, <deposit>, <caution flag>. Next dates: <record date, AGM, board meeting>. Latest results: <quarter label, EPS>.` ·
    `Web news:` then 2–3 one-line items. No "Files read" list and no recap of what you skipped unless it changes the answer.
+   Hard cap: 20 lines in all, counting every bullet and heading. Use only the lines in the shape above; leave out
+   company-fact paragraphs (EPS history, filings list, NAV, dividend detail beyond the record date) unless the user asked.
+   Freshness: say the data is current only if the last bar is the latest finished Sun-Thu session (a Monday is a
+   trading day); if run_health shows the newest block is a session behind, say "one session behind".
 
 ## Full analysis of one share ("analyse CODE", `/stock CODE`)
 Run the one-off check (Commands), then read that share's section of `data/watch/one_off.html` and reply in about
