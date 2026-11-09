@@ -114,3 +114,16 @@ failed on format, Q15 borderline, Q8 left out the World Bank 1993–2012 source.
   5,392.82 figure 8 Nov (it is the 9 Nov row); Q5 read this file; Q16's first re-runs said Crown had no Q3 filing.
 - Not done: Q19 still overwrites `one_off.html` with an empty page. Task Last Result -2147020576 at 9:56 on 9 Nov
   still unexplained.
+
+### 2026-11-09, second full run: 20 checks with the read-only Bash guard hook (commits 9b7f2f5, 1aa2faf)
+**20 of 20 follow every MUST / MUST NOT.** Same method (16 in parallel, then Q11, 13, 14, 19 one at a time). The guard
+(`.claude/hooks/dse_watch_bash_guard.py`) blocked nothing the answers needed: Q13's agent had two calls blocked (a
+`cd ... && ... ; ...` chain and a `python -c`) and re-ran the plain `watch_share.py` command.
+- Q19 now leaves `one_off.html` alone after a bad code (the page stayed at 55 KB with AL-HAJTEX; before the
+  `watch_share.py` fix it was overwritten with an empty page).
+- Q5 read `SECRETS_RESULTS.md` and said the 90% is the max-drawdown column, not a win rate (the first-run slip is gone).
+- Q9 gave 26.8% below the high; Q8 named the World Bank / S&P stand-in and dated 5,392.82 as the 9 Nov fetch.
+- Slips that broke no rule: Q16 said "Q3 doesn't match Crown's calendar" (Jan–Mar is its Q3 and a filing exists);
+  Q1 gave a wrong 60-day figure then corrected it.
+- Hook note: agent definitions load at the start of a turn, so a hook edit only shows in the next turn;
+  `$CLAUDE_PROJECT_DIR` is not set for the hook in a session started elsewhere, so the path is absolute.
