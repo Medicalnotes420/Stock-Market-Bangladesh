@@ -127,3 +127,18 @@ failed on format, Q15 borderline, Q8 left out the World Bank 1993–2012 source.
   Q1 gave a wrong 60-day figure then corrected it.
 - Hook note: agent definitions load at the start of a turn, so a hook edit only shows in the next turn;
   `$CLAUDE_PROJECT_DIR` is not set for the hook in a session started elsewhere, so the path is absolute.
+
+### 2026-11-09, third full run: facts.json and run_health.py (agent quotes them instead of rebuilding)
+**20 of 20 follow every MUST / MUST NOT** (Q15 failed once on a trailing "Checked against" line, fixed by a rule and a
+passing re-run). New: `watch_share.py` writes `data/watch/facts.json` (turnover, dividend ahead, latest quarter with
+its fiscal label, EPS/NAV with periods, recent results filings); `scripts/run_health.py` prints task result plus
+the newest log block, failures first.
+- Fixed by code, not wording: Q1 no longer carries AL-HAJTEX's turnover to CROWNCEMNT (Tk 0.3 mn vs 10.8 mn); Q16 no
+  longer says "Q3 doesn't match" (it reads `recent_results_filings`: Q3 filed 30 Apr, Q1 filed 8 Nov).
+- Q18 quotes `run_health.py`; its first two calls were blocked by the guard (`cd ... &&` chain, absolute path) and the
+  agent file now says to run each command alone from the repo folder.
+- Slips that broke no rule: Q5 gave the news log's newest entry as 5 Nov (it is 9 Nov); Q8 used 5,341.63 (27.5%) not
+  5,392.82 (26.8%); Q12 added an unrequested `--max-pb 5`; Q11 tried a `python -c`, blocked by the hook.
+- Open: `facts.json` EPS (Tk 4.52, FY2025) lags DSE's 27 Oct notice (Tk 5.08, FY2026); the agents flag it but the
+  fix belongs in `fundamentals()`. The task's "Power Management" field is blank (no battery condition), logon mode
+  is "Interactive only"; the 9:56 AM failure on 9 Nov is unexplained.
