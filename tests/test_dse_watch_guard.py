@@ -25,6 +25,22 @@ class GuardTest(unittest.TestCase):
                   'python scripts/screen.py | tee out.txt', '']:
             self.assertFalse(guard.allowed(c), c)
 
+    def test_watch_share_only_writes_the_one_off_page(self):
+        ok = 'python scripts/watch_share.py --symbols AL-HAJTEX --above 180 --below 170 --out data/watch/one_off.html'
+        self.assertTrue(guard.allowed(ok))
+        for c in ['python scripts/watch_share.py',  # watchlist run: rewrites watch.html and the real forecast log
+                  'python scripts/watch_share.py --symbols GP',
+                  'python scripts/watch_share.py --symbols GP --out data/watch/watch.html',
+                  'python scripts/watch_share.py --symbols GP --o data/watch/watch.html --out data/watch/one_off.html',
+                  'python scripts/watch_share.py --symbols GP --out data/watch/one_off.html --out x.html']:
+            self.assertFalse(guard.allowed(c), c)
+
+    def test_answer_key_is_blocked(self):
+        self.assertFalse(guard.allowed('cat docs/AGENT_CHECKS.md'))
+        self.assertFalse(guard.allowed('grep -i buy docs/agent_checks.md'))
+        self.assertTrue(guard.answer_key(r'E:\AI Apps\Stockapp\docs\AGENT_CHECKS.md'))
+        self.assertFalse(guard.answer_key('docs/FINDINGS.md'))
+
 
 if __name__ == "__main__":
     unittest.main()

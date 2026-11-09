@@ -780,6 +780,14 @@ def facts_for(df, a):
                                        "detail": (x.get("body") or "")[:300]}
                                       for x in (a["news"] if isinstance(a.get("news"), list) else [])
                                       if x.get("type") == "Financials"][:4]}
+    # the price line of a "how is it doing" answer, so the agent quotes it instead of digging it out of the page
+    out.update({"trend": a.get("trend"), "rsi": round(a["rsi"], 1) if "rsi" in a else None,
+                "moves_pct": {k: round(v * 100, 1) for k, v in a.get("change", {}).items()},
+                "support_20d": a.get("support"), "resistance_20d": a.get("resistance"),
+                "ranges_80pct": {f"{h}_sessions": {k: round(float(r[k]), 2) for k in ("low", "mid", "high")}
+                                 for h, r in a.get("forecast", {}).items()},  # after any dividend adjustment
+                "alerts_fired": [x["rule"] for x in a.get("alerts", []) if x["fired"]],
+                "rule_flags": a.get("secrets", []), "track_record": a.get("score", {})})
     d = a.get("dividend")
     if d:
         out["dividend_ahead"] = {"cash_pct": d["pct"], "tk_per_share": d["tk"], "record_date": f'{d["record"]:%Y-%m-%d}',

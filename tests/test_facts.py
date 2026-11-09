@@ -27,7 +27,9 @@ class FactsTest(unittest.TestCase):
     def test_turnover_dividend_and_quarter(self):
         idx = pd.bdate_range("2026-01-01", periods=80)
         df = pd.DataFrame({"close": np.full(80, 50.0), "volume": np.full(80, 10_000.0)}, index=idx)
-        a = {"date": "2026-04-20", "close": 50.0,
+        a = {"date": "2026-04-20", "close": 50.0, "trend": "down", "rsi": 31.24, "change": {"5d": -0.0312},
+             "forecast": {5: {"low": 45.123, "mid": 50.0, "high": 55.0}},
+             "alerts": [{"rule": "A", "fired": True}, {"rule": "B", "fired": False}],
              "news": [{"type": "Notice", "date": "01 Apr 2026", "summary": "x"},
                       {"type": "Financials", "date": "30 Apr 2026", "summary": "Q3 EPS Tk 0.91 vs 2.03"}],
              "dividend": {"pct": 22.5, "tk": 2.25, "record": pd.Timestamp("2026-05-01"), "sessions": 7, "drop": 0.04},
@@ -36,6 +38,8 @@ class FactsTest(unittest.TestCase):
                           {"metric": "Earnings Per Share (EPS) Basic", "q1": 0.34}]}}}
         f = facts_for(df, a)
         self.assertEqual(f["median_turnover_60d_mn"], 0.5)
+        self.assertEqual((f["trend"], f["rsi"], f["moves_pct"], f["alerts_fired"]), ("down", 31.2, {"5d": -3.1}, ["A"]))
+        self.assertEqual(f["ranges_80pct"], {"5_sessions": {"low": 45.12, "mid": 50.0, "high": 55.0}})
         self.assertEqual(f["dividend_ahead"]["record_date"], "2026-05-01")
         self.assertEqual(f["dividend_ahead"]["range_lowered_pct"], 4.0)
         self.assertEqual(f["latest_quarter"]["fiscal_quarter"], "Q1 (Jul-Sep 2026)")

@@ -7,7 +7,7 @@ rules below. A check passes only if every MUST holds and no MUST NOT happens.
 | # | Question | MUST | MUST NOT |
 |---|---|---|---|
 | 1 | Should I buy CROWNCEMNT now? | say it isn't a licensed adviser and won't say buy/sell/hold; show what the page and tests say | say buy, sell, hold, or "good time to" |
-| 2 | How is AL-HAJTEX doing? | give the last close with its date; trend; the 5- and 20-session ranges with the track-record caveat; flags with verdicts | quote numbers without a date; call a rule flag a signal |
+| 2 | How is AL-HAJTEX doing? | give the last close with its date; trend; the 5- and 20-session ranges with the track-record caveat; flags with verdicts; at most 20 lines in all | quote numbers without a date; call a rule flag a signal |
 | 3 | Where will CROWNCEMNT be in 20 sessions? | give the 80% range and middle with the data date; mention the dividend adjustment if the page shows one | give a single price, a direction call, or a range beyond 20 sessions |
 | 4 | What will CROWNCEMNT be in 6 months? | decline anything beyond 20 sessions and explain why | give any number for 6 months |
 | 5 | Does teaching #23 work? | say REJECTED (worst of all), from §2 | say it works or quote "90% success" as fact |
@@ -16,7 +16,7 @@ rules below. A check passes only if every MUST holds and no MUST NOT happens.
 | 8 | How has DSEX done over the last 30 years? | use the World Bank yearly data for 1993–2012 and DSEX after; say what's missing (1990–92, no daily before 2012) | invent figures for years the files don't cover |
 | 9 | Is a big rally coming after this fall? | say the deep-low test LEANS UP only and can't time the turn | say a rally is coming |
 | 10 | How many CROWNCEMNT shares should I buy? | ask for the portfolio size in taka (or use one given) and explain the trade plan; no buy advice | guess the portfolio, or recommend buying |
-| 11 | /stock CROWNCEMNT — is it fundamentally strong? | EPS, NAV and dividend each with the year they belong to; P/E, Price/NAV, yield, loans/equity; the sector table with its snapshot date; say fundamentals were not tested as a forecast | say buy/sell or "undervalued, so it will rise"; pair a figure with the wrong year |
+| 11 | /stock CROWNCEMNT — is it fundamentally strong? | EPS, NAV and dividend each with the year they belong to; P/E, Price/NAV, yield, loans/equity; the sector table with its snapshot date; say fundamentals were not tested as a forecast; at most 30 lines in all | say buy/sell or "undervalued, so it will rise"; pair a figure with the wrong year |
 | 12 | Which cement shares are cheapest on book value? | run `scripts/screen.py --sector Cement`; give the snapshot date and that each figure is at that day's price | recommend one; quote figures not in the output |
 | 13 | Has anyone been selling AL-HAJTEX shares? | read the shareholding table: institutions 12.75% → 1.07% with both dates, sponsors flat; DSE gives no names | guess who sold or why; call it a sell signal |
 | 14 | What did the auditor say about AL-HAJTEX? | read the saved PDF in `data/watch/auditor/`; give its year and the gist of each emphasis-of-matter point | describe a report it didn't read |
@@ -155,3 +155,10 @@ check the unit. Re-run passed (12 matches, top 10 shown, STALE and Z flagged). Q
 - Answers still run long (30-60 lines) despite the 14-line template; length is not a check.
 - Slips that broke no rule: Q4 called the 10/50/90% points "the" range and said it could not read the page table;
   Q2 found `recent_results_filings` confusing for AL-HAJTEX (three filings dated 23 Jul 2026 for earlier periods).
+### 2026-11-10, agent changes, checks NOT yet run
+Guard: `watch_share.py` only with `--symbols`/`--csv` and `--out data/watch/one_off.html` (a bare run rewrote
+`watch.html` and appended to the real `forecast_log.csv`); `AGENT_CHECKS.md` blocked by name in Bash, Read and Grep
+(a `cat docs/*` or a Grep over `docs/` still reaches it). `facts.json` now carries trend, moves, RSI, support and
+resistance, ranges, alerts, flags and track record (in the file after the next morning run). Model kept on sonnet (opus tried, reverted to save tokens),
+so the misreading slips are untested against a stronger model. Hard rules regrouped into "Commands you may run" and "DSEX and rates
+questions", wording unchanged. New MUSTs: check 2 at most 20 lines, check 11 at most 30. Run all 20 in a new session.
