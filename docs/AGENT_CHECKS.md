@@ -142,3 +142,16 @@ the newest log block, failures first.
 - Open: `facts.json` EPS (Tk 4.52, FY2025) lags DSE's 27 Oct notice (Tk 5.08, FY2026); the agents flag it but the
   fix belongs in `fundamentals()`. The task's "Power Management" field is blank (no battery condition), logon mode
   is "Interactive only"; the 9:56 AM failure on 9 Nov is unexplained.
+
+### 2026-11-09, fourth full run: task events, declared EPS, short-answer shape
+**20 of 20 follow every MUST / MUST NOT after one fix.** 16 in parallel, then Q11, 13, 14, 19 one at a time. Q20 failed
+once: the agent ran `screen.py --min-yield 5` (read as 500%), got 0 matches and told the user no share qualifies (12 of
+408 do). Fixed in code: `screen()` reads a yield above 1 as percent, plus a rule that a "0 matches" yield result means
+check the unit. Re-run passed (12 matches, top 10 shown, STALE and Z flagged). Q1 re-run now says "not a licensed adviser".
+- `run_health.py` also reads the Task Scheduler event log; task history is OFF on this PC, so there is still no
+  record of why the 9:56 AM run failed on 9 Nov (turning it on is a system setting, left to the user).
+- `fundamentals()` takes EPS from the dividend declaration when newer than DSE's table: CROWNCEMNT now EPS Tk 5.08
+  (FY2026), P/E 11.1, payout 44.3%; `facts.json` carries each results filing's first 300 characters.
+- Answers still run long (30-60 lines) despite the 14-line template; length is not a check.
+- Slips that broke no rule: Q4 called the 10/50/90% points "the" range and said it could not read the page table;
+  Q2 found `recent_results_filings` confusing for AL-HAJTEX (three filings dated 23 Jul 2026 for earlier periods).
