@@ -45,6 +45,10 @@ class Metrics(unittest.TestCase):
     def test_max_drawdown(self):
         self.assertAlmostEqual(max_drawdown(pd.Series([100, 120, 90, 130, 65])), 0.5)
 
+    def test_max_drawdown_edges(self):
+        self.assertEqual(max_drawdown(pd.Series([100, 101, 105])), 0.0)           # never falls
+        self.assertAlmostEqual(max_drawdown(pd.Series([100, None, 50])), 0.5)     # NaN ignored
+
     def test_first_breach_of_kill_level(self):
         eq = pd.Series([100, 110, 95, 93, 120, 90], index=pd.bdate_range("2020-01-01", periods=6))
         self.assertEqual(first_breach(eq, 0.15), eq.index[3])     # 93/110 = -15.45%
