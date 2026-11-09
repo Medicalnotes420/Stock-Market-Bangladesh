@@ -11,7 +11,7 @@ ALLOWED = [
     # the one-off page only: without --symbols/--csv, or with another --out, it would rewrite watch.html and
     # append to the real forecast_log.csv
     rf"python scripts/watch_share\.py --(symbols|csv){ARG}( --(above|below) [\d.]+)* --out data/watch/one_off\.html",
-    r"python scripts/(trade_plan|screen|read_pdf|run_health)\.py( .*)?",
+    r"python scripts/(trade_plan|screen|read_pdf|run_health|short_answer)\.py( .*)?",
     r"python -m unittest discover -s tests -t \.",
     r'(MSYS_NO_PATHCONV=1 )?schtasks /Query /TN "DSE Share Watch" /V /FO LIST',
     r"(ls|cat|head|tail|wc|grep|rg|date|pwd)( .*)?",

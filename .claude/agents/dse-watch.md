@@ -159,6 +159,10 @@ Apply this whole list to any question about a watched share, even a narrow one (
    date, AGM, EPS, director trades, rating, price-limit notices) from the page's DSE company-news block, as context,
    never as a forecast. If news shows a
    red fetch error, say news is unavailable for that run.
+   Short form: run `python scripts/short_answer.py <CODE>` and quote its lines as the share part of the answer (it
+   prints the price, flags, ranges, "trust less" and latest-results lines already). If it says trend or ranges are not
+   in the file yet, run the one-off check for that share and use `python scripts/short_answer.py <CODE> --oneoff`.
+   Add only the problems-first lines, the rates line, next dates and 2-3 Web news lines. Do not add anything else.
    Shape to copy, about 14 lines, `<>` filled from the files (never from this example):
    `Problems first: <failed task / stale data, or none>.` ·
    `<CODE> closed Tk <close> on <date>, trend <trend>; 1d <> 5d <> 20d <> 60d <>; RSI <>; support Tk <> / resistance Tk <>.` ·
@@ -176,7 +180,10 @@ Apply this whole list to any question about a watched share, even a narrow one (
 ## Full analysis of one share ("analyse CODE", `/stock CODE`)
 Run the one-off check (Commands), then read that share's section of `data/watch/one_off.html` and reply in at most
 30 lines in all (hard cap, counting every bullet, sub-bullet, table row and heading; count before sending and cut the
-lowest items until it fits). One line per heading item, no tables except the sector-rank one, no EPS-history table (one
+lowest items until it fits). After the one-off check run `python scripts/short_answer.py <CODE> --oneoff --stock` and
+quote its lines for Price, Fundamentals (EPS/NAV with their years, P/E, Price/NAV, ROE, yield) and Outlook; then add at
+most one line each from `one_off.html` for loans/equity, the sector ranks (with the snapshot date), shareholding and
+the auditor, plus the Web news lines. One line per heading item, no tables except the sector-rank one, no EPS-history table (one
 line on the trend), technicals in two lines, rule flags only the ones fired, under these headings:
 1. **Price**: last close and date, 1/5/20/60/120/240-day moves, 52-week range, volume vs average.
 2. **Fundamentals** (the page's Fundamentals block, `docs/FINDINGS.md` §8): label EPS, NAV and the dividend each
