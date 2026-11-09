@@ -40,7 +40,29 @@ class FactsTest(unittest.TestCase):
         self.assertEqual(f["dividend_ahead"]["range_lowered_pct"], 4.0)
         self.assertEqual(f["latest_quarter"]["fiscal_quarter"], "Q1 (Jul-Sep 2026)")
         self.assertEqual(f["eps_period"], "FY2025")
-        self.assertEqual(f["recent_results_filings"], [{"date": "30 Apr 2026", "summary": "Q3 EPS Tk 0.91 vs 2.03"}])
+        self.assertEqual(f["recent_results_filings"],
+                         [{"date": "30 Apr 2026", "summary": "Q3 EPS Tk 0.91 vs 2.03", "detail": ""}])
+
+
+class DeclaredEpsTest(unittest.TestCase):
+    BODY = ("The Board of Directors has recommended 22.50% Cash Dividend for the year ended June 30, 2026. The Company "
+            "has also reported EPS of Tk. 5.08, NAV per share of Tk. 65.73 for the year ended June 30, 2026 as against "
+            "EPS of Tk. 4.52, NAV per share of Tk. 62.66 for the year ended June 30, 2025.")
+
+    def test_declared_eps_beats_the_lagging_table(self):
+        from dse_quant.watch import fundamentals
+        co = {"faceValue": 10, "paidUpCapital": 1e8, "multiYearFinancials": [{"year": 2025, "epsBasic": 4.52, "nav": 62.66}],
+              "dividendHistory": [{"year": 2025, "cash": 20, "stock": 0}], "interimFinancials": "$undefined",
+              "sharePattern": "$undefined", "loanStatus": {"shortTerm": 1.0, "longTerm": 0.0}}
+        f = fundamentals(co, 56.2, [{"type": "Dividend", "body": self.BODY}])
+        self.assertEqual((f["eps"], f["eps_when"]), (5.08, "FY2026 (dividend declaration)"))
+        self.assertAlmostEqual(f["pe"], 56.2 / 5.08)
+
+    def test_table_eps_kept_without_a_newer_declaration(self):
+        from dse_quant.watch import fundamentals
+        co = {"faceValue": 10, "paidUpCapital": 1e8, "multiYearFinancials": [{"year": 2025, "epsBasic": 4.52, "nav": 62.66}],
+              "dividendHistory": [], "interimFinancials": "$undefined", "sharePattern": "$undefined", "loanStatus": {}}
+        self.assertEqual(fundamentals(co, 56.2, [])["eps"], 4.52)
 
 
 class RunHealthTest(unittest.TestCase):
@@ -52,6 +74,16 @@ class RunHealthTest(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("-2147020576 (0x800710E0)", lines[0])
         self.assertTrue(any("regime RISK_OFF" in ln for ln in lines))
+
+    def test_parse_events(self):
+        txt = ("Event[0]:\n  Log Name: x\n  Date: 2026-11-09T09:56:40\n  Event ID: 201\n  Description:\n"
+               "Task Scheduler failed action \"x\"\n\nEvent[1]:\n  Date: 2026-11-09T08:00:00\n  Event ID: 101\n"
+               "  Description:\nTask failed to start\n")
+        out = rh.parse_events(txt)
+        self.assertEqual(len(out), 2)
+        self.assertIn("id 201", out[0])
+        self.assertIn("Task failed to start", out[1])
+        self.assertEqual(rh.parse_events(""), [])
 
     def test_clean_run_and_failed_block(self):
         ok_task = {"Last Result": "0"}

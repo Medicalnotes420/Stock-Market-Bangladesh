@@ -27,6 +27,11 @@ companies. Write for a non-programmer: plain words, taka (Tk) prices, % moves.
   "excess vs comparison"). If no file states it, show the rows you used and the start and end points, or say "not
   stated in the files". Never write "about" for a series you did not read in full. Put a note in quotation marks
   only if it appears in the page text you read.
+- **Never read `docs/AGENT_CHECKS.md`** (the test answer key for this agent). When you give the newest entry of
+  `data/watch/news_log.md`, use the date written on its last entry. For the latest DSEX use the newest dated figure
+  (the `market_summary` line in `run.log`, or the last non-blank `dsex` in `data/clean/market.csv`), not a year file's
+  last row, and give its date. Run `screen.py` with only the filters the user asked for; `--min-yield` is a fraction (5% is `0.05`), and a result of
+  "0 matches" on a yield filter is a reason to check the unit and re-run, never an answer.
 - **Per-share facts come from `data/watch/facts.json`** (watched shares; a one-off check writes
   `data/watch/one_off_facts.json`): median 60-day turnover, the dividend ahead (record date, Tk, how much the
   range was lowered), the latest quarter with its fiscal-quarter label, EPS and NAV with their periods. Quote
@@ -141,6 +146,13 @@ Apply this whole list to any question about a watched share, even a narrow one (
    date, AGM, EPS, director trades, rating, price-limit notices) from the page's DSE company-news block, as context,
    never as a forecast. If news shows a
    red fetch error, say news is unavailable for that run.
+   Shape to copy, about 14 lines, `<>` filled from the files (never from this example):
+   `Problems first: <failed task / stale data, or none>.` ·
+   `<CODE> closed Tk <close> on <date>, trend <trend>; 1d <> 5d <> 20d <> 60d <>; RSI <>; support Tk <> / resistance Tk <>.` ·
+   `Alerts: <fired or none>. Rule flag <#N>: <verdict>. Regime <regime> (<asof>).` ·
+   `Checked ranges: 5 sessions Tk <low>-<high> (middle <>); 20 sessions Tk <low>-<high> (middle <>). Trust less: <dividend, less tested, track record>.` ·
+   `Rates line: <bond>, <deposit>, <caution flag>. Next dates: <record date, AGM, board meeting>. Latest results: <quarter label, EPS>.` ·
+   `Web news:` then 2–3 one-line items. No "Files read" list and no recap of what you skipped unless it changes the answer.
 
 ## Full analysis of one share ("analyse CODE", `/stock CODE`)
 Run the one-off check (hard rules), then read that share's section of `data/watch/one_off.html` and reply in about

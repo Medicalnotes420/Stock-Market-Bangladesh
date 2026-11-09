@@ -150,19 +150,22 @@ def _num(x):
 DECL_RE = re.compile(r"recommended\s+(.{0,80}?dividend).{0,80}?(?<![Hh]alf[ -])year ended\s+\w+\s+\d+,\s+(\d{4})", re.I | re.S)
 CASH_RE, STOCK_RE = re.compile(r"([\d.]+)%\s+cash", re.I), re.compile(r"([\d.]+)%\s+stock", re.I)
 NAV_RE = re.compile(r"NAV per share of Tk\.?\s*(\(?)([\d.]+)\)?", re.I)
+EPS_RE = re.compile(r"EPS of Tk\.?\s*(\(?)([\d.]+)\)?", re.I)  # first match is the declared year; the prior year follows "as against"
 
 
 def _declared(news, after_year):
     """Newest year-end dividend declaration in dse.com.bd news for a year after `after_year`:
-    {"year", "cash", "stock", "nav"} (nav None if not stated; "(x)" means negative), or None."""
+    {"year", "cash", "stock", "nav", "eps"} (nav/eps None if not stated; "(x)" means negative), or None."""
     for x in news or []:
         m = DECL_RE.search(x.get("body", "")) if x.get("type") == "Dividend" else None
         if m:
             if int(m[2]) <= after_year:
                 return None
             ca, st, nv = CASH_RE.search(m[1]), STOCK_RE.search(m[1]), NAV_RE.search(x["body"])
+            ep = EPS_RE.search(x["body"])
             return {"year": int(m[2]), "cash": float(ca[1]) if ca else 0.0, "stock": float(st[1]) if st else 0.0,
-                    "nav": (-1 if nv[1] else 1) * float(nv[2]) if nv else None}
+                    "nav": (-1 if nv[1] else 1) * float(nv[2]) if nv else None,
+                    "eps": (-1 if ep[1] else 1) * float(ep[2]) if ep else None}
     return None
 
 
@@ -181,8 +184,9 @@ def fundamentals(c, price, news=()):
     inter_rows = rows_of(inter.get("rows"))
     eps_row = next((r for r in inter_rows if str(r.get("metric", "")).startswith("Earnings Per Share (EPS) Basic")), {})
     annual = str(ends.get("annual") or "")
-    if len(annual) == 6 and _num(eps_row.get("annual")) is not None and int(annual[:4]) > (last.get("year") or 0):
-        eps, eps_when = float(eps_row["annual"]), f"year to {annual[4:]}/{annual[:4]} (interim report)"
+    eps_year = last.get("year") or 0
+    if len(annual) == 6 and _num(eps_row.get("annual")) is not None and int(annual[:4]) > eps_year:
+        eps, eps_when, eps_year = float(eps_row["annual"]), f"year to {annual[4:]}/{annual[:4]} (interim report)", int(annual[:4])
     nav, nav_when = _num(last.get("nav")), f"FY{last.get('year', '?')}"
     face = _num(c.get("faceValue")) or 10.0
     paid = _num(c.get("paidUpCapital"))
@@ -194,6 +198,8 @@ def fundamentals(c, price, news=()):
         dv = {"year": f'{dec["year"]} (declared)', "cash": dec["cash"], "stock": dec["stock"]}
         if dec["nav"] is not None:
             nav, nav_when = dec["nav"], f"FY{dec['year']} (dividend declaration)"
+        if dec["eps"] is not None and dec["year"] > eps_year:  # DSE's multi-year table lags the declaration
+            eps, eps_when = dec["eps"], f"FY{dec['year']} (dividend declaration)"
     div_tk = (_num(dv.get("cash")) or 0) / 100 * face if dv else None
     loans = c.get("loanStatus") if isinstance(c.get("loanStatus"), dict) else {}
     debt = sum(v for v in (_num(loans.get("shortTerm")), _num(loans.get("longTerm"))) if v is not None) if loans else None
@@ -770,7 +776,8 @@ def facts_for(df, a):
     out = {"bar_date": a["date"], "close": a["close"], "median_turnover_60d_mn": round(med / 1e6, 1),
            "tested_shares_min_turnover_mn": 20, "dividend_ahead": None, "latest_quarter": None,
            # DSE's own results filings, newest first, so a claim like "Q3 EPS up 300%" is checked against them
-           "recent_results_filings": [{"date": x.get("date"), "summary": x.get("summary")}
+           "recent_results_filings": [{"date": x.get("date"), "summary": x.get("summary"),
+                                       "detail": (x.get("body") or "")[:300]}
                                       for x in (a["news"] if isinstance(a.get("news"), list) else [])
                                       if x.get("type") == "Financials"][:4]}
     d = a.get("dividend")

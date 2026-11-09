@@ -98,6 +98,8 @@ def sector_view(tab, code, day):
 def screen(tab, max_pe=None, max_pb=None, min_yield=None, max_de=None, sector=None, financials=False):
     """Shares passing every given limit, cheapest Price/NAV first. A missing figure fails a limit set on it."""
     t = tab if financials else tab[~tab.sector.isin(FINANCIAL)]
+    if min_yield is not None and min_yield > 1:  # "5" can only mean 5%: a yield of 500% does not exist
+        min_yield /= 100
     if sector:
         t = t[t.sector.str.lower() == sector.lower()]
     for col, lim, keep in (("pe", max_pe, lambda c, x: (c > 0) & (c <= x)), ("pb", max_pb, lambda c, x: c <= x),

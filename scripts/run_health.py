@@ -55,12 +55,38 @@ def summarise(task, block):
     return problems + facts, not problems
 
 
+EVENT_LOG = "Microsoft-Windows-TaskScheduler/Operational"
+
+
+def parse_events(text, n=8):
+    """One line per event in `wevtutil qe /f:text` output: 'date  id  first description line'."""
+    out = []
+    for block in text.split("Event[")[1:]:
+        date = next((ln.split(":", 1)[1].strip() for ln in block.splitlines() if ln.strip().startswith("Date:")), "?")
+        eid = next((ln.split(":", 1)[1].strip() for ln in block.splitlines() if ln.strip().startswith("Event ID:")), "?")
+        desc = block.split("Description:", 1)[1].strip().splitlines()[0] if "Description:" in block else ""
+        out.append(f"Task event {date} id {eid}: {desc}")
+    return out[:n]
+
+
+def task_history():
+    """Lines about the task's own Task Scheduler events (why a run was refused, missed or failed), or one line
+    saying the history is switched off. Turning it on is a system setting, so this only reports it."""
+    def wev(*args):
+        return subprocess.run(["wevtutil", *args], capture_output=True, text=True).stdout
+    if "enabled: false" in wev("gl", EVENT_LOG):
+        return ["Task history is OFF, so Windows kept no record of why the 9:56 AM run failed. In Task Scheduler: "
+                "Action menu > Enable All Tasks History. It only records runs from then on."]
+    ev = wev("qe", EVENT_LOG, f"/q:*[EventData[Data[@Name='TaskName']='\\{TASK}']]", "/c:8", "/rd:true", "/f:text")
+    return parse_events(ev) or [f"Task history is on but has no events for '{TASK}' yet."]
+
+
 def main():
     r = subprocess.run(["schtasks", "/Query", "/TN", TASK, "/V", "/FO", "LIST"], capture_output=True, text=True)
     task = parse_schtasks(r.stdout)
     log = LOG.read_text(errors="replace") if LOG.exists() else ""
     lines, ok = summarise(task, last_block(log))
-    print("\n".join(lines))
+    print("\n".join(lines + task_history()))
     print("Note: a failed block followed by a later block with a '(session ...)' header and a regime line means the"
           " rerun recovered. Header times are this PC's clock.")
     sys.exit(0 if ok else 1)

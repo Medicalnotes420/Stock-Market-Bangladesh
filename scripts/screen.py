@@ -16,7 +16,7 @@ from dse_quant.fundamentals import eps_stale, latest_snapshot, screen, table  # 
 ap = argparse.ArgumentParser()
 ap.add_argument("--max-pe", type=float)
 ap.add_argument("--max-pb", type=float, help="Price / NAV")
-ap.add_argument("--min-yield", type=float, help="cash dividend yield as a fraction, e.g. 0.04")
+ap.add_argument("--min-yield", type=float, help="cash dividend yield as a fraction, e.g. 0.04 (a value above 1, like 4, is read as percent)")
 ap.add_argument("--max-de", type=float, help="loans / equity")
 ap.add_argument("--sector")
 ap.add_argument("--financials", action="store_true")

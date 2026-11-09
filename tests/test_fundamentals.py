@@ -44,6 +44,7 @@ class Fundamentals(unittest.TestCase):
         self.assertIn("D", screen(tab, financials=True).index)
         self.assertEqual(list(screen(tab, max_pe=100).index), ["B", "A"])  # a loss fails a P/E limit
         self.assertEqual(list(screen(tab, sector="cement", min_yield=0.03).index), ["B"])
+        self.assertEqual(list(screen(tab, sector="cement", min_yield=3).index), ["B"])  # 3 means 3%, not 300%
 
     def test_snapshot_roundtrip_and_trim(self):
         with tempfile.TemporaryDirectory() as d:
