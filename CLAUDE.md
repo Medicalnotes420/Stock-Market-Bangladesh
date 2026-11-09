@@ -1,5 +1,5 @@
 # Rules
-- Done = `pytest` passes. Report pass/fail in one line.
+- Done = `python -m unittest discover -s tests` shows no new failures (7 errors pre-exist). Report pass/fail in one line.
 - Don't restate your reasoning in the reply; give the result and the diff summary.
 - Reuse helpers in `dse_quant/` and `scripts/` before writing new ones.
 - Backtest changes: state the Sharpe/drawdown before and after on the same data.
