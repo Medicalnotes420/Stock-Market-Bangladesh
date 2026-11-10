@@ -1,0 +1,15 @@
+{
+  "model": "claude-haiku-5-5",
+  "advisorModel": "claude-opus-5-5",
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "python \"E:/AI Apps/Stockapp/.claude/hooks/jev_router.py\"" }] }
+    ],
+    "PostToolUse": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "python \"E:/AI Apps/Stockapp/.claude/hooks/jev_router.py\"" }] }
+    ],
+    "PostToolUseFailure": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "python \"E:/AI Apps/Stockapp/.claude/hooks/jev_router.py\"" }] }
+    ]
+  }
+}

@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 
 whatsapp.env
+
+.claude/state/
