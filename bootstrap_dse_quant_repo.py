@@ -1238,6 +1238,103 @@ async def test_check_alive_raises_once_worker_has_ended(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_failed_write_is_visible_before_any_fill(tmp_path, monkeypatch):
+    """Audit M1/M3: a write that raises in the thread must block the next fill, not just the worker."""
+    import dse_paper_harness
+    from async_risk_guard import AuditEvent
+
+    def disk_full(fp, line):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(dse_paper_harness, "_append_line", disk_full)
+    logger = dse_paper_harness.AsyncAuditLogger(log_path=tmp_path / "a.jsonl")
+    logger.start()
+    await logger.put(AuditEvent(event_type="X", exchange_ts_ms=1, symbol="GP", side="BUY",
+                                qty=1, exec_price="1", commission_bdt="0",
+                                settled_cash_after_bdt="0"))
+    await asyncio.wait({logger._worker}, timeout=2)  # deterministic: wait for the writer to fail
+    with pytest.raises(OSError, match="disk full"):
+        logger.check_alive()
+    with pytest.raises(OSError, match="disk full"):
+        await logger.put(None)
+    with pytest.raises(OSError, match="disk full"):
+        await asyncio.wait_for(logger.stop(), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_stalled_write_times_out_and_blocks_further_work(tmp_path, monkeypatch):
+    """Audit M2/M3: a write that never returns must surface as a timeout, not a silent hang."""
+    import dse_paper_harness
+    import threading
+    from async_risk_guard import AuditEvent
+
+    gate = threading.Event()
+
+    def stall(fp, line):
+        gate.wait(5)
+
+    monkeypatch.setattr(dse_paper_harness, "_append_line", stall)
+    logger = dse_paper_harness.AsyncAuditLogger(log_path=tmp_path / "a.jsonl", write_timeout_s=0.05)
+    logger.start()
+    try:
+        await logger.put(AuditEvent(event_type="X", exchange_ts_ms=1, symbol="GP", side="BUY",
+                                    qty=1, exec_price="1", commission_bdt="0",
+                                    settled_cash_after_bdt="0"))
+        await asyncio.wait({logger._worker}, timeout=2)  # deterministic: wait for the timeout
+        with pytest.raises(TimeoutError):
+            logger.check_alive()
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(logger.stop(), timeout=1)
+    finally:
+        gate.set()
+
+
+def test_unwritable_log_path_fails_at_start_not_at_first_row(tmp_path):
+    """Audit L2: a bad log path must stop the session before any fill can commit."""
+    from dse_paper_harness import AsyncAuditLogger
+
+    logger = AsyncAuditLogger(log_path=tmp_path / "missing_dir" / "a.jsonl")
+
+    async def run() -> None:
+        with pytest.raises(FileNotFoundError):
+            logger.start()
+        assert logger._writer is None and logger._worker is None  # nothing half-started
+
+    asyncio.run(run())
+
+
+@pytest.mark.asyncio
+async def test_cancelled_before_first_step_still_releases_the_file(tmp_path):
+    """Audit low: cancelling the worker before its first step must not leak the thread or handle."""
+    from dse_paper_harness import AsyncAuditLogger
+
+    logger = AsyncAuditLogger(log_path=tmp_path / "a.jsonl")
+    logger.start()
+    writer = logger._writer
+    logger._worker.cancel()
+    with pytest.raises(RuntimeError, match="cancelled"):
+        await asyncio.wait_for(logger.stop(), timeout=2)
+    writer._thread.join(timeout=2)
+    assert not writer._thread.is_alive()
+    assert writer._fp.closed
+
+
+@pytest.mark.asyncio
+async def test_session_with_failing_disk_raises_and_does_not_hang(tmp_path, monkeypatch):
+    """Audit finding 2: a session whose every log write fails must raise promptly, not hang."""
+    import dse_paper_harness
+
+    def disk_full(fp, line):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(dse_paper_harness, "_append_line", disk_full)
+    with pytest.raises(OSError, match="disk full"):
+        await asyncio.wait_for(
+            dse_paper_harness.run_paper_session(log_path=tmp_path / "s.jsonl"), timeout=10
+        )
+
+
+@pytest.mark.asyncio
 async def test_cancelled_worker_is_reported_as_runtime_error_not_cancellation(tmp_path):
     """Audit L1: a cancelled drain worker must not raise CancelledError into an uncancelled caller."""
     from dse_paper_harness import AsyncAuditLogger
@@ -1271,6 +1368,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import queue as thread_queue
+import threading
 from dataclasses import asdict, dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -1287,6 +1386,63 @@ from async_risk_guard import (
 )
 
 
+def _append_line(fp, line: str) -> None:
+    fp.write(line)
+    fp.flush()
+
+
+def _resolve(fut: "asyncio.Future[None]", outcome: Optional[BaseException]) -> None:
+    if fut.done():  # already timed out or cancelled by the caller
+        return
+    if outcome is None:
+        fut.set_result(None)
+    else:
+        fut.set_exception(outcome)
+
+
+class _DiskWriter:
+    """Owns the log file on a daemon thread.
+
+    The event loop never touches the file, so a stalled write cannot freeze the loop
+    (audit finding 1). A daemon thread cannot block interpreter exit (finding 3).
+    """
+
+    def __init__(self, log_path: Path, loop: asyncio.AbstractEventLoop) -> None:
+        # Opened here, in start(): an unwritable path fails the session before any fill (audit L2)
+        self._fp = log_path.open("a", encoding="utf-8")
+        self._loop = loop
+        self._requests: thread_queue.Queue = thread_queue.Queue()
+        self._thread = threading.Thread(target=self._run, daemon=True, name="audit-disk-writer")
+        self._thread.start()
+
+    def _run(self) -> None:
+        fp = self._fp
+        while True:
+            req = self._requests.get()
+            if req is None:
+                break
+            line, fut = req
+            outcome: Optional[BaseException] = None
+            try:
+                _append_line(fp, line)
+            except BaseException as exc:
+                outcome = exc
+            try:
+                self._loop.call_soon_threadsafe(_resolve, fut, outcome)
+            except RuntimeError:
+                pass  # the loop has closed; nobody is waiting on this row any more
+        fp.close()
+
+    def submit(self, line: str) -> "asyncio.Future[None]":
+        fut = self._loop.create_future()
+        self._requests.put((line, fut))
+        return fut
+
+    def close(self) -> None:
+        """Non-blocking: the writer thread closes the file after draining what it has."""
+        self._requests.put(None)
+
+
 @dataclass(frozen=True)
 class StagedOrder:
     order_id: str
@@ -1300,17 +1456,30 @@ class StagedOrder:
 class AsyncAuditLogger:
     """Drains AuditEvent items from an asyncio.Queue outside the portfolio lock."""
 
-    def __init__(self, log_path: Path = Path("dse_paper_audit.jsonl")) -> None:
+    def __init__(
+        self,
+        log_path: Path = Path("dse_paper_audit.jsonl"),
+        write_timeout_s: float = 5.0,
+    ) -> None:
         self.queue: asyncio.Queue[Optional[AuditEvent]] = asyncio.Queue(maxsize=10_000)
         self.log_path = log_path
+        self.write_timeout_s = write_timeout_s
         self._worker: Optional[asyncio.Task[None]] = None
+        self._writer: Optional[_DiskWriter] = None
         self.events_written: int = 0
+        # Set in the same step that a write raises or times out, so no fill can run unseen (audit M1)
+        self.failure: Optional[BaseException] = None
 
     def start(self) -> None:
+        self._writer = _DiskWriter(self.log_path, asyncio.get_running_loop())
         self._worker = asyncio.create_task(self._drain_loop())
+        # Release the file however the worker ends, including cancellation before its first step
+        self._worker.add_done_callback(lambda _task: self._writer.close())
 
     async def put(self, item: Optional[AuditEvent]) -> None:
         """Enqueue without blocking on a dead drain worker (audit M1, M2)."""
+        if self.failure is not None:
+            raise self.failure
         if self._worker is None:
             raise RuntimeError("audit logger not started")
         if self._worker.done():
@@ -1329,7 +1498,9 @@ class AsyncAuditLogger:
         self._raise_worker_end()
 
     def check_alive(self) -> None:
-        """Raise if the drain worker has ended, so fills do not pile up unseen (audit M2)."""
+        """Raise if a write has failed or the drain worker has ended, so fills do not pile up unseen."""
+        if self.failure is not None:
+            raise self.failure
         if self._worker is not None and self._worker.done():
             self._raise_worker_end()
 
@@ -1353,16 +1524,29 @@ class AsyncAuditLogger:
             raise self._worker.exception()
 
     async def _drain_loop(self) -> None:
-        with self.log_path.open("a", encoding="utf-8") as fp:
+        assert self._writer is not None
+        try:
             while True:
                 ev = await self.queue.get()
                 if ev is None:
                     self.queue.task_done()
                     break
-                fp.write(json.dumps(asdict(ev)) + "\n")
-                fp.flush()
+                try:
+                    # A write that stalls past the timeout is a failure, not a silent hang (audit M2)
+                    await asyncio.wait_for(
+                        self._writer.submit(json.dumps(asdict(ev)) + "\n"),
+                        timeout=self.write_timeout_s,
+                    )
+                except BaseException as exc:
+                    if isinstance(exc, asyncio.CancelledError):
+                        self.failure = RuntimeError("audit drain cancelled mid-write")  # finding 4
+                    else:
+                        self.failure = exc
+                    raise
                 self.events_written += 1
                 self.queue.task_done()
+        finally:
+            self._writer.close()
 
 
 async def simulated_dse_stream(num_ticks: int = 12) -> AsyncIterator[MarketTick]:
@@ -1425,6 +1609,7 @@ async def _run_ticks(
             if tick.exchange_ts_ms < order.signal_ts_ms + MIN_NETWORK_LATENCY_MS:
                 still_waiting.append(order)  # retry on a later tick of this symbol
                 continue
+            logger.check_alive()  # per order: no fill may commit on a writer that has already died
             try:
                 if order.side == OrderSide.BUY:
                     await portfolio.ingest_tick_and_buy(

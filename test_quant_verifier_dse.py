@@ -467,6 +467,103 @@ async def test_check_alive_raises_once_worker_has_ended(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_failed_write_is_visible_before_any_fill(tmp_path, monkeypatch):
+    """Audit M1/M3: a write that raises in the thread must block the next fill, not just the worker."""
+    import dse_paper_harness
+    from async_risk_guard import AuditEvent
+
+    def disk_full(fp, line):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(dse_paper_harness, "_append_line", disk_full)
+    logger = dse_paper_harness.AsyncAuditLogger(log_path=tmp_path / "a.jsonl")
+    logger.start()
+    await logger.put(AuditEvent(event_type="X", exchange_ts_ms=1, symbol="GP", side="BUY",
+                                qty=1, exec_price="1", commission_bdt="0",
+                                settled_cash_after_bdt="0"))
+    await asyncio.wait({logger._worker}, timeout=2)  # deterministic: wait for the writer to fail
+    with pytest.raises(OSError, match="disk full"):
+        logger.check_alive()
+    with pytest.raises(OSError, match="disk full"):
+        await logger.put(None)
+    with pytest.raises(OSError, match="disk full"):
+        await asyncio.wait_for(logger.stop(), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_stalled_write_times_out_and_blocks_further_work(tmp_path, monkeypatch):
+    """Audit M2/M3: a write that never returns must surface as a timeout, not a silent hang."""
+    import dse_paper_harness
+    import threading
+    from async_risk_guard import AuditEvent
+
+    gate = threading.Event()
+
+    def stall(fp, line):
+        gate.wait(5)
+
+    monkeypatch.setattr(dse_paper_harness, "_append_line", stall)
+    logger = dse_paper_harness.AsyncAuditLogger(log_path=tmp_path / "a.jsonl", write_timeout_s=0.05)
+    logger.start()
+    try:
+        await logger.put(AuditEvent(event_type="X", exchange_ts_ms=1, symbol="GP", side="BUY",
+                                    qty=1, exec_price="1", commission_bdt="0",
+                                    settled_cash_after_bdt="0"))
+        await asyncio.wait({logger._worker}, timeout=2)  # deterministic: wait for the timeout
+        with pytest.raises(TimeoutError):
+            logger.check_alive()
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(logger.stop(), timeout=1)
+    finally:
+        gate.set()
+
+
+def test_unwritable_log_path_fails_at_start_not_at_first_row(tmp_path):
+    """Audit L2: a bad log path must stop the session before any fill can commit."""
+    from dse_paper_harness import AsyncAuditLogger
+
+    logger = AsyncAuditLogger(log_path=tmp_path / "missing_dir" / "a.jsonl")
+
+    async def run() -> None:
+        with pytest.raises(FileNotFoundError):
+            logger.start()
+        assert logger._writer is None and logger._worker is None  # nothing half-started
+
+    asyncio.run(run())
+
+
+@pytest.mark.asyncio
+async def test_cancelled_before_first_step_still_releases_the_file(tmp_path):
+    """Audit low: cancelling the worker before its first step must not leak the thread or handle."""
+    from dse_paper_harness import AsyncAuditLogger
+
+    logger = AsyncAuditLogger(log_path=tmp_path / "a.jsonl")
+    logger.start()
+    writer = logger._writer
+    logger._worker.cancel()
+    with pytest.raises(RuntimeError, match="cancelled"):
+        await asyncio.wait_for(logger.stop(), timeout=2)
+    writer._thread.join(timeout=2)
+    assert not writer._thread.is_alive()
+    assert writer._fp.closed
+
+
+@pytest.mark.asyncio
+async def test_session_with_failing_disk_raises_and_does_not_hang(tmp_path, monkeypatch):
+    """Audit finding 2: a session whose every log write fails must raise promptly, not hang."""
+    import dse_paper_harness
+
+    def disk_full(fp, line):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(dse_paper_harness, "_append_line", disk_full)
+    with pytest.raises(OSError, match="disk full"):
+        await asyncio.wait_for(
+            dse_paper_harness.run_paper_session(log_path=tmp_path / "s.jsonl"), timeout=10
+        )
+
+
+@pytest.mark.asyncio
 async def test_cancelled_worker_is_reported_as_runtime_error_not_cancellation(tmp_path):
     """Audit L1: a cancelled drain worker must not raise CancelledError into an uncancelled caller."""
     from dse_paper_harness import AsyncAuditLogger
