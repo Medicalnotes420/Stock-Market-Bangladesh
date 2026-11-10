@@ -594,6 +594,24 @@ async def test_send_parked_raises_when_writer_died_and_releases_the_file(tmp_pat
     writer._thread.join(timeout=2)
     assert writer._fp.closed
     assert portfolio.has_unsent_audit()  # the parked row was not silently dropped
+    assert isinstance(logger._worker.exception(), OSError)  # retrieved, so no teardown warning
+
+
+@pytest.mark.asyncio
+async def test_loop_stall_does_not_fake_a_write_timeout(tmp_path):
+    """Audit MEDIUM-1: a loop blocked past the timeout must not fail a row the disk already wrote."""
+    import time
+    from dse_paper_harness import AsyncAuditLogger
+
+    logger = AsyncAuditLogger(log_path=tmp_path / "a.jsonl", write_timeout_s=0.05)
+    logger.start()
+    await logger.put(_row("x"))
+    await asyncio.sleep(0.01)  # the drain submits the row and starts waiting
+    time.sleep(0.3)  # block the loop well past the timeout while the write completes
+    await asyncio.sleep(0.05)
+    await logger.stop()
+    assert logger.failure is None
+    assert logger.events_written == 1
 
 
 @pytest.mark.asyncio

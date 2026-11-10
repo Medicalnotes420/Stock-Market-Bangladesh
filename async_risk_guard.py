@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import itertools
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from enum import Enum
@@ -39,6 +40,9 @@ def _require_int(name: str, value: object, minimum: int) -> int:
 
 def _require_qty(qty: object) -> int:
     return _require_int("qty", qty, 1)
+
+
+_ORDER_IDS = itertools.count(1)  # process-unique, so ids never repeat across portfolios
 
 
 class ShareCategory(str, Enum):
@@ -149,6 +153,7 @@ class AuditEvent:
     commission_bdt: str
     settled_cash_after_bdt: str
     reason: str = "OK"
+    order_id: int = 0  # 0 for tick-path rows; decorator rows carry their order's id
 
 
 class AsyncPortfolioState:
@@ -196,7 +201,6 @@ class AsyncPortfolioState:
         self.pending_qty: Dict[str, int] = {}
         # Decorator orders whose broker outcome is unknown; they hold cash until resolve_unknown()
         self.unknown_orders: List[PendingOrder] = []
-        self._next_order_id: int = 1
         # Audit rows that could not be queued after a fill; the next fill refuses until they are sent (audit M1)
         self._unsent_audit: List[AuditEvent] = []
         self.audit_queue = audit_queue
@@ -486,6 +490,7 @@ class AsyncPortfolioState:
                     commission_bdt=str(commission),
                     settled_cash_after_bdt=str(self.settled_cash),
                     reason="BROKER_FILL",
+                    order_id=order.order_id,
                 )
             )
 
@@ -572,8 +577,7 @@ def async_risk_guard(
                 portfolio.settled_cash -= total_cost
                 portfolio.reserved_cash += total_cost
                 portfolio.pending_qty[tick.symbol] = portfolio.pending_qty.get(tick.symbol, 0) + qty
-                order_id = portfolio._next_order_id
-                portfolio._next_order_id += 1
+                order_id = next(_ORDER_IDS)
                 order = PendingOrder(
                     order_id=order_id,
                     symbol=tick.symbol,

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import itertools
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from enum import Enum
@@ -54,6 +55,9 @@ def _require_int(name: str, value: object, minimum: int) -> int:
 
 def _require_qty(qty: object) -> int:
     return _require_int("qty", qty, 1)
+
+
+_ORDER_IDS = itertools.count(1)  # process-unique, so ids never repeat across portfolios
 
 
 class ShareCategory(str, Enum):
@@ -164,6 +168,7 @@ class AuditEvent:
     commission_bdt: str
     settled_cash_after_bdt: str
     reason: str = "OK"
+    order_id: int = 0  # 0 for tick-path rows; decorator rows carry their order's id
 
 
 class AsyncPortfolioState:
@@ -211,7 +216,6 @@ class AsyncPortfolioState:
         self.pending_qty: Dict[str, int] = {}
         # Decorator orders whose broker outcome is unknown; they hold cash until resolve_unknown()
         self.unknown_orders: List[PendingOrder] = []
-        self._next_order_id: int = 1
         # Audit rows that could not be queued after a fill; the next fill refuses until they are sent (audit M1)
         self._unsent_audit: List[AuditEvent] = []
         self.audit_queue = audit_queue
@@ -501,6 +505,7 @@ class AsyncPortfolioState:
                     commission_bdt=str(commission),
                     settled_cash_after_bdt=str(self.settled_cash),
                     reason="BROKER_FILL",
+                    order_id=order.order_id,
                 )
             )
 
@@ -587,8 +592,7 @@ def async_risk_guard(
                 portfolio.settled_cash -= total_cost
                 portfolio.reserved_cash += total_cost
                 portfolio.pending_qty[tick.symbol] = portfolio.pending_qty.get(tick.symbol, 0) + qty
-                order_id = portfolio._next_order_id
-                portfolio._next_order_id += 1
+                order_id = next(_ORDER_IDS)
                 order = PendingOrder(
                     order_id=order_id,
                     symbol=tick.symbol,
@@ -804,6 +808,26 @@ async def test_successful_fill_writes_an_audit_row():
     assert event.event_type == "ORDER_FILLED"
     assert event.qty == 10
     assert event.symbol == "GP"
+    assert event.order_id > 0
+
+
+@pytest.mark.asyncio
+async def test_order_ids_are_unique_across_portfolios():
+    queue_a: asyncio.Queue = asyncio.Queue()
+    queue_b: asyncio.Queue = asyncio.Queue()
+    ids = []
+    for queue in (queue_a, queue_b):
+        portfolio = AsyncPortfolioState(
+            initial_cash=Decimal("100000.00"), max_position_pct=Decimal("1.00"), audit_queue=queue
+        )
+
+        @async_risk_guard(portfolio)
+        async def buy(symbol: str, qty: int, price: Decimal) -> int:
+            return qty
+
+        await buy(make_tick(ts=1_000, ask="100.00"), 1, 900)
+        ids.append(queue.get_nowait().order_id)
+    assert ids[0] != ids[1]
 
 
 @pytest.mark.asyncio
@@ -1694,6 +1718,24 @@ async def test_send_parked_raises_when_writer_died_and_releases_the_file(tmp_pat
     writer._thread.join(timeout=2)
     assert writer._fp.closed
     assert portfolio.has_unsent_audit()  # the parked row was not silently dropped
+    assert isinstance(logger._worker.exception(), OSError)  # retrieved, so no teardown warning
+
+
+@pytest.mark.asyncio
+async def test_loop_stall_does_not_fake_a_write_timeout(tmp_path):
+    """Audit MEDIUM-1: a loop blocked past the timeout must not fail a row the disk already wrote."""
+    import time
+    from dse_paper_harness import AsyncAuditLogger
+
+    logger = AsyncAuditLogger(log_path=tmp_path / "a.jsonl", write_timeout_s=0.05)
+    logger.start()
+    await logger.put(_row("x"))
+    await asyncio.sleep(0.01)  # the drain submits the row and starts waiting
+    time.sleep(0.3)  # block the loop well past the timeout while the write completes
+    await asyncio.sleep(0.05)
+    await logger.stop()
+    assert logger.failure is None
+    assert logger.events_written == 1
 
 
 @pytest.mark.asyncio
@@ -1777,6 +1819,15 @@ def _resolve(fut: "asyncio.Future[None]", outcome: Optional[BaseException]) -> N
         fut.set_exception(outcome)
 
 
+class _Pending:
+    """One submitted row. The writer thread sets finished and error before the loop hears about it."""
+
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self.future: "asyncio.Future[None]" = loop.create_future()
+        self.finished = threading.Event()
+        self.error: Optional[BaseException] = None
+
+
 class _DiskWriter:
     """Owns the log file on a daemon thread.
 
@@ -1798,22 +1849,24 @@ class _DiskWriter:
             req = self._requests.get()
             if req is None:
                 break
-            line, fut = req
+            line, pend = req
             outcome: Optional[BaseException] = None
             try:
                 _append_line(fp, line)
             except BaseException as exc:
                 outcome = exc
+            pend.error = outcome
+            pend.finished.set()
             try:
-                self._loop.call_soon_threadsafe(_resolve, fut, outcome)
+                self._loop.call_soon_threadsafe(_resolve, pend.future, outcome)
             except RuntimeError:
                 pass  # the loop has closed; nobody is waiting on this row any more
         fp.close()
 
-    def submit(self, line: str) -> "asyncio.Future[None]":
-        fut = self._loop.create_future()
-        self._requests.put((line, fut))
-        return fut
+    def submit(self, line: str) -> _Pending:
+        pend = _Pending(self._loop)
+        self._requests.put((line, pend))
+        return pend
 
     def close(self) -> None:
         """Non-blocking: the writer thread closes the file after draining what it has."""
@@ -1836,7 +1889,7 @@ class AsyncAuditLogger:
     def __init__(
         self,
         log_path: Path = Path("dse_paper_audit.jsonl"),
-        write_timeout_s: float = 5.0,
+        write_timeout_s: float = 1.0,  # shortcut: fills can run for up to this long during a stuck write; upgrade by refusing fills while a write is in flight
     ) -> None:
         self.queue: asyncio.Queue[Optional[AuditEvent]] = asyncio.Queue(maxsize=10_000)
         self.log_path = log_path
@@ -1910,10 +1963,15 @@ class AsyncAuditLogger:
                     break
                 try:
                     # A write that stalls past the timeout is a failure, not a silent hang (audit M2)
-                    await asyncio.wait_for(
-                        self._writer.submit(json.dumps(asdict(ev)) + "\n"),
-                        timeout=self.write_timeout_s,
-                    )
+                    pending = self._writer.submit(json.dumps(asdict(ev)) + "\n")
+                    try:
+                        await asyncio.wait_for(pending.future, timeout=self.write_timeout_s)
+                    except asyncio.TimeoutError:
+                        # A blocked loop can let the timer expire after the write finished: trust the writer
+                        if not pending.finished.is_set():
+                            raise
+                        if pending.error is not None:
+                            raise pending.error
                 except BaseException as exc:
                     if isinstance(exc, asyncio.CancelledError):
                         self.failure = RuntimeError("audit drain cancelled mid-write")  # finding 4

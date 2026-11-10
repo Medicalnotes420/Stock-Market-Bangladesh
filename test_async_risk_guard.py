@@ -183,6 +183,26 @@ async def test_successful_fill_writes_an_audit_row():
     assert event.event_type == "ORDER_FILLED"
     assert event.qty == 10
     assert event.symbol == "GP"
+    assert event.order_id > 0
+
+
+@pytest.mark.asyncio
+async def test_order_ids_are_unique_across_portfolios():
+    queue_a: asyncio.Queue = asyncio.Queue()
+    queue_b: asyncio.Queue = asyncio.Queue()
+    ids = []
+    for queue in (queue_a, queue_b):
+        portfolio = AsyncPortfolioState(
+            initial_cash=Decimal("100000.00"), max_position_pct=Decimal("1.00"), audit_queue=queue
+        )
+
+        @async_risk_guard(portfolio)
+        async def buy(symbol: str, qty: int, price: Decimal) -> int:
+            return qty
+
+        await buy(make_tick(ts=1_000, ask="100.00"), 1, 900)
+        ids.append(queue.get_nowait().order_id)
+    assert ids[0] != ids[1]
 
 
 @pytest.mark.asyncio

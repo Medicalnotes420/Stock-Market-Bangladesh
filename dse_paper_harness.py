@@ -40,6 +40,15 @@ def _resolve(fut: "asyncio.Future[None]", outcome: Optional[BaseException]) -> N
         fut.set_exception(outcome)
 
 
+class _Pending:
+    """One submitted row. The writer thread sets finished and error before the loop hears about it."""
+
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self.future: "asyncio.Future[None]" = loop.create_future()
+        self.finished = threading.Event()
+        self.error: Optional[BaseException] = None
+
+
 class _DiskWriter:
     """Owns the log file on a daemon thread.
 
@@ -61,22 +70,24 @@ class _DiskWriter:
             req = self._requests.get()
             if req is None:
                 break
-            line, fut = req
+            line, pend = req
             outcome: Optional[BaseException] = None
             try:
                 _append_line(fp, line)
             except BaseException as exc:
                 outcome = exc
+            pend.error = outcome
+            pend.finished.set()
             try:
-                self._loop.call_soon_threadsafe(_resolve, fut, outcome)
+                self._loop.call_soon_threadsafe(_resolve, pend.future, outcome)
             except RuntimeError:
                 pass  # the loop has closed; nobody is waiting on this row any more
         fp.close()
 
-    def submit(self, line: str) -> "asyncio.Future[None]":
-        fut = self._loop.create_future()
-        self._requests.put((line, fut))
-        return fut
+    def submit(self, line: str) -> _Pending:
+        pend = _Pending(self._loop)
+        self._requests.put((line, pend))
+        return pend
 
     def close(self) -> None:
         """Non-blocking: the writer thread closes the file after draining what it has."""
@@ -99,7 +110,7 @@ class AsyncAuditLogger:
     def __init__(
         self,
         log_path: Path = Path("dse_paper_audit.jsonl"),
-        write_timeout_s: float = 5.0,
+        write_timeout_s: float = 1.0,  # shortcut: fills can run for up to this long during a stuck write; upgrade by refusing fills while a write is in flight
     ) -> None:
         self.queue: asyncio.Queue[Optional[AuditEvent]] = asyncio.Queue(maxsize=10_000)
         self.log_path = log_path
@@ -173,10 +184,15 @@ class AsyncAuditLogger:
                     break
                 try:
                     # A write that stalls past the timeout is a failure, not a silent hang (audit M2)
-                    await asyncio.wait_for(
-                        self._writer.submit(json.dumps(asdict(ev)) + "\n"),
-                        timeout=self.write_timeout_s,
-                    )
+                    pending = self._writer.submit(json.dumps(asdict(ev)) + "\n")
+                    try:
+                        await asyncio.wait_for(pending.future, timeout=self.write_timeout_s)
+                    except asyncio.TimeoutError:
+                        # A blocked loop can let the timer expire after the write finished: trust the writer
+                        if not pending.finished.is_set():
+                            raise
+                        if pending.error is not None:
+                            raise pending.error
                 except BaseException as exc:
                     if isinstance(exc, asyncio.CancelledError):
                         self.failure = RuntimeError("audit drain cancelled mid-write")  # finding 4
