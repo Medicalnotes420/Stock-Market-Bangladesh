@@ -139,7 +139,7 @@ class AsyncPortfolioState:
     """
     Concurrency-safe portfolio state protected by an asyncio.Lock.
     Supports both decorator-driven atomic cash reservations (with automatic rollback)
-    and full DSE T+2/T+3 tick execution.
+    and full DSE T+2/T+3 tick execution. Both buy paths share one pre-trade check.
     """
 
     def __init__(
@@ -221,6 +221,73 @@ class AsyncPortfolioState:
         if self.audit_queue is not None:
             self.audit_queue.put_nowait(event)  # capacity guaranteed by _require_audit_capacity
 
+    def _check_buy_unlocked(
+        self,
+        tick: MarketTick,
+        qty: int,
+        signal_generated_ts_ms: int,
+        min_network_latency_ms: int,
+    ) -> tuple[Decimal, Decimal, Decimal]:
+        """Every pre-trade buy check, in order, shared by the tick path and the decorator.
+
+        Commits only market data (watermark and mark), so a rejected order cannot move the book.
+        Returns (exec_price, commission, required_cash). Caller must hold self._lock and must not
+        await between this call and committing the reservation or fill.
+        """
+        if tick.exchange_ts_ms < self.last_exchange_ts_ms:
+            raise TemporalLeakageError(
+                f"Out-of-order tick: {tick.exchange_ts_ms} < watermark {self.last_exchange_ts_ms}"
+            )
+        # The tick is ordered, so it is valid market data whatever happens to this order.
+        # Commit watermark and mark now, so a rejected or latency-blocked tick still
+        # blocks older ticks and marks the book (see audit N1, F2, F4).
+        self.last_exchange_ts_ms = tick.exchange_ts_ms
+        self.last_prices[tick.symbol] = tick.bid  # conservative mark for longs
+
+        if tick.exchange_ts_ms < signal_generated_ts_ms + min_network_latency_ms:
+            raise TemporalLeakageError(
+                f"Look-ahead fill rejected: tick_ts={tick.exchange_ts_ms} "
+                f"< signal_ts ({signal_generated_ts_ms}) + latency ({min_network_latency_ms})"
+            )
+
+        if tick.ask >= tick.upper_circuit or tick.ask_volume <= 0:
+            raise CircuitBreakerLiquidityError(
+                f"{tick.symbol} locked at upper circuit ({tick.upper_circuit}) or zero ask depth."
+            )
+
+        equity = self.total_equity_unlocked()
+        drawdown = (self.initial_equity - equity) / self.initial_equity
+        if drawdown >= self.max_drawdown_pct:
+            raise MaxDrawdownCircuitBreakerError(
+                f"Portfolio drawdown {drawdown:.2%} >= limit {self.max_drawdown_pct:.2%}"
+            )
+
+        slippage_bps = Decimal("0") if qty <= tick.ask_volume else Decimal("25")
+        exec_price, commission, required_cash = self.calculate_buy_cost(
+            tick.ask, qty, slippage_bps=slippage_bps
+        )
+        if exec_price > tick.upper_circuit:  # a penalised fill above the circuit cannot print
+            raise CircuitBreakerLiquidityError(
+                f"{tick.symbol} penalised fill {exec_price} above upper circuit {tick.upper_circuit}."
+            )
+
+        if required_cash > self.settled_cash:
+            raise SettlementViolationError(
+                f"Insufficient settled cash: need {required_cash}, have {self.settled_cash}"
+            )
+
+        existing_qty = (
+            self.matured_positions.get(tick.symbol, 0)
+            + self.pending_qty.get(tick.symbol, 0)
+            + sum(lot.qty for lot in self.unsettled_share_lots if lot.symbol == tick.symbol)
+        )
+        new_exposure = (Decimal(existing_qty + qty) * exec_price) / equity
+        if new_exposure > self.max_position_pct:
+            raise PositionLimitExceededError(
+                f"Position exposure {new_exposure:.2%} exceeds max {self.max_position_pct:.2%}"
+            )
+        return exec_price, commission, required_cash
+
     async def ingest_tick_and_buy(
         self,
         tick: MarketTick,
@@ -233,58 +300,9 @@ class AsyncPortfolioState:
         _require_int("signal_generated_ts_ms", signal_generated_ts_ms, 0)
         _require_int("min_network_latency_ms", min_network_latency_ms, 1)
         async with self._lock:
-            if tick.exchange_ts_ms < self.last_exchange_ts_ms:
-                raise TemporalLeakageError(
-                    f"Out-of-order tick: {tick.exchange_ts_ms} < watermark {self.last_exchange_ts_ms}"
-                )
-            # The tick is ordered, so it is valid market data whatever happens to this order.
-            # Commit watermark and mark now, so a rejected or latency-blocked tick still
-            # blocks older ticks and marks the book (see audit N1, F2, F4).
-            self.last_exchange_ts_ms = tick.exchange_ts_ms
-            self.last_prices[tick.symbol] = tick.bid  # conservative mark for longs
-
-            if tick.exchange_ts_ms < signal_generated_ts_ms + min_network_latency_ms:
-                raise TemporalLeakageError(
-                    f"Look-ahead fill rejected: tick_ts={tick.exchange_ts_ms} "
-                    f"< signal_ts ({signal_generated_ts_ms}) + latency ({min_network_latency_ms})"
-                )
-
-            if tick.ask >= tick.upper_circuit or tick.ask_volume <= 0:
-                raise CircuitBreakerLiquidityError(
-                    f"{tick.symbol} locked at upper circuit ({tick.upper_circuit}) or zero ask depth."
-                )
-
-            equity = self.total_equity_unlocked()
-            drawdown = (self.initial_equity - equity) / self.initial_equity
-            if drawdown >= self.max_drawdown_pct:
-                raise MaxDrawdownCircuitBreakerError(
-                    f"Portfolio drawdown {drawdown:.2%} >= limit {self.max_drawdown_pct:.2%}"
-                )
-
-            slippage_bps = Decimal("0") if qty <= tick.ask_volume else Decimal("25")
-            exec_price, commission, required_cash = self.calculate_buy_cost(
-                tick.ask, qty, slippage_bps=slippage_bps
+            exec_price, commission, required_cash = self._check_buy_unlocked(
+                tick, qty, signal_generated_ts_ms, min_network_latency_ms
             )
-            if exec_price > tick.upper_circuit:  # a penalised fill above the circuit cannot print
-                raise CircuitBreakerLiquidityError(
-                    f"{tick.symbol} penalised fill {exec_price} above upper circuit {tick.upper_circuit}."
-                )
-
-            if required_cash > self.settled_cash:
-                raise SettlementViolationError(
-                    f"Insufficient settled cash: need {required_cash}, have {self.settled_cash}"
-                )
-
-            existing_qty = (
-                self.matured_positions.get(tick.symbol, 0)
-                + self.pending_qty.get(tick.symbol, 0)
-                + sum(lot.qty for lot in self.unsettled_share_lots if lot.symbol == tick.symbol)
-            )
-            new_exposure = (Decimal(existing_qty + qty) * exec_price) / equity
-            if new_exposure > self.max_position_pct:
-                raise PositionLimitExceededError(
-                    f"Position exposure {new_exposure:.2%} exceeds max {self.max_position_pct:.2%}"
-                )
 
             # All checks passed: commit the fill
             self._require_audit_capacity()
@@ -423,57 +441,33 @@ def async_risk_guard(
     portfolio: AsyncPortfolioState,
 ) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
     """
-    Decorator that atomically validates drawdown, position limits, and reserves
-    settled cash (including 0.30% DSE commission + 0.10 BDT tick rounding) BEFORE
-    executing an async broker order coroutine, rolling back automatically on failure.
+    Decorator for a broker order coroutine. The order is priced from a MarketTick, not a
+    caller-supplied price, and passes the same pre-trade checks as the tick path (watermark,
+    latency, circuit, drawdown, cash, exposure). Cash is reserved before the broker call
+    and rolled back on any exit, including cancellation.
 
-    Note: this path takes no tick, so it has no watermark, latency or L1-depth checks.
-    It is a second buy path; do not expose it to live flow without adding them.
+    The wrapped coroutine is called as func(symbol, qty, exec_price, *args, **kwargs).
+    Limitation: this path emits no audit row. Use ingest_tick_and_buy for recorded fills.
     """
     def decorator(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
         @functools.wraps(func)
         async def wrapper(
-            symbol: str,
+            tick: MarketTick,
             qty: int,
-            price: Decimal,
+            signal_generated_ts_ms: int,
             *args: Any,
-            category: ShareCategory,  # required: a silent default would mis-settle Z lots as T+2
             **kwargs: Any,
         ) -> Any:
             _require_qty(qty)
-            _require_decimal("price", price)
-            if price <= 0:
-                raise ValueError("price must be positive")
-            category = ShareCategory(category)  # unknown values raise ValueError
-            lag = 3 if category == ShareCategory.Z else 2
+            _require_int("signal_generated_ts_ms", signal_generated_ts_ms, 0)
+            lag = 3 if tick.category == ShareCategory.Z else 2
+            symbol = tick.symbol
 
-            # Step 1: Atomic Pre-Trade Risk Check & Cash Reservation
+            # Step 1: shared pre-trade checks, then atomic cash reservation
             async with portfolio._lock:
-                equity = portfolio.total_equity_unlocked({symbol: price})  # override only, not committed
-                drawdown = (portfolio.initial_equity - equity) / portfolio.initial_equity
-                if drawdown >= portfolio.max_drawdown_pct:
-                    raise MaxDrawdownCircuitBreakerError(
-                        f"Drawdown {drawdown:.2%} breached limit {portfolio.max_drawdown_pct:.2%}"
-                    )
-
-                exec_price, _, total_cost = portfolio.calculate_buy_cost(price, qty)
-                if total_cost > portfolio.settled_cash:
-                    raise InsufficientSettledCashError(
-                        f"Need {total_cost} BDT (incl. 0.30% fee), available: {portfolio.settled_cash} BDT"
-                    )
-
-                existing_qty = (
-                    portfolio.matured_positions.get(symbol, 0)
-                    + portfolio.pending_qty.get(symbol, 0)
-                    + sum(lot.qty for lot in portfolio.unsettled_share_lots if lot.symbol == symbol)
+                exec_price, _, total_cost = portfolio._check_buy_unlocked(
+                    tick, qty, signal_generated_ts_ms, MIN_NETWORK_LATENCY_MS
                 )
-                exposure = (Decimal(existing_qty + qty) * exec_price) / equity
-                if exposure > portfolio.max_position_pct:
-                    raise PositionLimitExceededError(
-                        f"Exposure {exposure:.2%} exceeds limit {portfolio.max_position_pct:.2%}"
-                    )
-
-                # Reserve cash before awaiting broker I/O
                 portfolio.settled_cash -= total_cost
                 portfolio.reserved_cash += total_cost
                 portfolio.pending_qty[symbol] = portfolio.pending_qty.get(symbol, 0) + qty
@@ -489,7 +483,6 @@ def async_risk_guard(
                 else:
                     portfolio.pending_qty.pop(symbol, None)
                 if filled:
-                    portfolio.last_prices[symbol] = price  # mark only on a confirmed fill
                     portfolio.unsettled_share_lots.append(
                         SettlementLot(symbol=symbol, qty=qty, clears_at_day=clears_at_day)
                     )
@@ -499,7 +492,7 @@ def async_risk_guard(
             # Step 2: broker call outside the lock; roll back on any exit (incl. cancellation)
             try:
                 result = await func(symbol, qty, exec_price, *args, **kwargs)
-            except BaseException:
+            except BaseException:  # includes CancelledError from wait_for timeouts
                 _finalize(filled=False)
                 raise
             _finalize(filled=True)
