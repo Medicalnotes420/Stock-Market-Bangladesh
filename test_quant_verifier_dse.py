@@ -548,6 +548,54 @@ async def test_cancelled_before_first_step_still_releases_the_file(tmp_path):
     assert writer._fp.closed
 
 
+def _row(reason: str):
+    from async_risk_guard import AuditEvent
+
+    return AuditEvent(event_type="X", exchange_ts_ms=1, symbol="GP", side="BUY", qty=1,
+                      exec_price="1", commission_bdt="0", settled_cash_after_bdt="0", reason=reason)
+
+
+@pytest.mark.asyncio
+async def test_send_parked_waits_for_room_then_writes_rows_in_order(tmp_path):
+    """Audit M1: parked rows wait while the queue is full, then reach the log in order."""
+    import json
+    from dse_paper_harness import AsyncAuditLogger, _send_parked
+
+    logger = AsyncAuditLogger(log_path=tmp_path / "a.jsonl")
+    logger.start()
+    portfolio = AsyncPortfolioState(initial_cash=Decimal("1000.00"), audit_queue=logger.queue)
+    portfolio._unsent_audit = [_row("1"), _row("2")]
+    await asyncio.wait_for(_send_parked(portfolio, logger), timeout=5)
+    await logger.stop()
+    reasons = [json.loads(line)["reason"] for line in (tmp_path / "a.jsonl").read_text().splitlines()]
+    assert reasons == ["1", "2"]
+    assert not portfolio.has_unsent_audit()
+
+
+@pytest.mark.asyncio
+async def test_send_parked_raises_when_writer_died_and_releases_the_file(tmp_path, monkeypatch):
+    """Audit M1: with a dead writer, parked rows cannot be sent; the call must raise and the file must close."""
+    import dse_paper_harness
+    from dse_paper_harness import AsyncAuditLogger, _send_parked
+
+    def disk_gone(fp, line):
+        raise OSError("disk gone")
+
+    monkeypatch.setattr(dse_paper_harness, "_append_line", disk_gone)
+    logger = AsyncAuditLogger(log_path=tmp_path / "a.jsonl")
+    logger.start()
+    writer = logger._writer
+    await logger.put(_row("trigger"))
+    await asyncio.wait({logger._worker}, timeout=2)
+    portfolio = AsyncPortfolioState(initial_cash=Decimal("1000.00"), audit_queue=logger.queue)
+    portfolio._unsent_audit = [_row("parked")]
+    with pytest.raises(OSError, match="disk gone"):
+        await asyncio.wait_for(_send_parked(portfolio, logger), timeout=2)
+    writer._thread.join(timeout=2)
+    assert writer._fp.closed
+    assert portfolio.has_unsent_audit()  # the parked row was not silently dropped
+
+
 @pytest.mark.asyncio
 async def test_session_with_failing_disk_raises_and_does_not_hang(tmp_path, monkeypatch):
     """Audit finding 2: a session whose every log write fails must raise promptly, not hang."""

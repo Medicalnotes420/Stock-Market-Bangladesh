@@ -214,6 +214,15 @@ async def simulated_dse_stream(num_ticks: int = 12) -> AsyncIterator[MarketTick]
         await asyncio.sleep(0.002)
 
 
+async def _send_parked(portfolio: AsyncPortfolioState, logger: AsyncAuditLogger) -> None:
+    """Queue parked audit rows, waiting while the queue is full. Raises if the writer has died."""
+    while portfolio.has_unsent_audit():
+        logger.check_alive()
+        portfolio.flush_unsent_audit()
+        if portfolio.has_unsent_audit():
+            await asyncio.sleep(0.001)
+
+
 async def run_paper_session(log_path: Path = Path("dse_paper_audit.jsonl")) -> AsyncPortfolioState:
     # The log is append-only: a rerun adds rows rather than erasing the previous session's audit trail
     logger = AsyncAuditLogger(log_path=log_path)
@@ -224,13 +233,17 @@ async def run_paper_session(log_path: Path = Path("dse_paper_audit.jsonl")) -> A
         max_position_pct=Decimal("0.30"),
         max_drawdown_pct=Decimal("0.10"),
         audit_queue=logger.queue,
+        audit_guard=logger.check_alive,
     )
 
     staged: Dict[str, List[StagedOrder]] = {}
     try:
         await _run_ticks(portfolio, logger, staged)
     finally:
-        await logger.stop()  # always drain and close the audit file, even on error
+        try:
+            await _send_parked(portfolio, logger)  # rows parked by the decorator path must reach the log
+        finally:
+            await logger.stop()  # always drain and close the audit file, even on error
     return portfolio
 
 
@@ -242,6 +255,7 @@ async def _run_ticks(
     seq = 0
     async for tick in simulated_dse_stream(num_ticks=12):
         logger.check_alive()  # a dead writer must stop the session, not let fills pile up unlogged
+        await _send_parked(portfolio, logger)
         # 1. Execute previously staged orders once the latency window has elapsed
         pending = staged.get(tick.symbol, [])
         still_waiting: List[StagedOrder] = []

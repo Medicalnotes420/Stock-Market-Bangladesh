@@ -82,6 +82,10 @@ class CircuitBreakerLiquidityError(RiskViolationError):
     """Raised when price is pinned at DSE daily circuit limits or L1 volume is zero."""
 
 
+class BrokerRejectedError(Exception):
+    """The broker explicitly refused the order, so nothing was filled and its cash is released."""
+
+
 @dataclass(frozen=True)
 class MarketTick:
     symbol: str
@@ -113,6 +117,18 @@ class SettlementLot:
     symbol: str
     qty: int
     clears_at_day: int
+
+
+@dataclass
+class PendingOrder:
+    """A decorator order whose broker outcome is not yet settled; its cash and quantity stay reserved."""
+    symbol: str
+    qty: int
+    exec_price: Decimal
+    total_cost: Decimal
+    clears_at_day: int
+    exchange_ts_ms: int
+    order_id: int
 
 
 @dataclass
@@ -150,6 +166,7 @@ class AsyncPortfolioState:
         commission_rate: Decimal = DSE_COMMISSION_RATE,
         current_trading_day: int = 1,
         audit_queue: Optional[asyncio.Queue[Optional[AuditEvent]]] = None,
+        audit_guard: Optional[Callable[[], None]] = None,
     ) -> None:
         self._lock = asyncio.Lock()
         _require_decimal("initial_cash", initial_cash)
@@ -177,7 +194,14 @@ class AsyncPortfolioState:
         self.last_prices: Dict[str, Decimal] = {}
         # Quantity reserved by decorator orders still awaiting the broker; counts toward exposure
         self.pending_qty: Dict[str, int] = {}
+        # Decorator orders whose broker outcome is unknown; they hold cash until resolve_unknown()
+        self.unknown_orders: List[PendingOrder] = []
+        self._next_order_id: int = 1
+        # Audit rows that could not be queued after a fill; the next fill refuses until they are sent (audit M1)
+        self._unsent_audit: List[AuditEvent] = []
         self.audit_queue = audit_queue
+        # Raises if the audit writer has died; run inside the lock, so a fill cannot race it
+        self.audit_guard = audit_guard
 
     @property
     def available_cash(self) -> Decimal:
@@ -213,13 +237,36 @@ class AsyncPortfolioState:
         return self.settled_cash + self.reserved_cash + receivables + inventory
 
     def _require_audit_capacity(self) -> None:
-        """Fail closed: refuse to fill when the audit queue cannot take the row (audit F10)."""
-        if self.audit_queue is not None and self.audit_queue.full():
+        """Fail closed: refuse to fill when the audit writer is dead or rows cannot be queued."""
+        if self.audit_guard is not None:
+            self.audit_guard()
+        self.flush_unsent_audit()
+        if self._unsent_audit or (self.audit_queue is not None and self.audit_queue.full()):
             raise RuntimeError("audit queue full: refusing to fill without an audit row")
 
+    def flush_unsent_audit(self) -> None:
+        """Queue parked audit rows that fit now. Synchronous: no await, so no interleaving with fills."""
+        while self._unsent_audit and self.audit_queue is not None and not self.audit_queue.full():
+            try:
+                self.audit_queue.put_nowait(self._unsent_audit[0])
+            except Exception:  # e.g. QueueShutDown: the row stays parked
+                return
+            self._unsent_audit.pop(0)  # pop only after the row is queued
+
     def _emit_audit_unlocked(self, event: AuditEvent) -> None:
-        if self.audit_queue is not None:
-            self.audit_queue.put_nowait(event)  # capacity guaranteed by _require_audit_capacity
+        """Never raises: a row that cannot be queued is parked, in order, and blocks the next fill."""
+        if self.audit_queue is None:
+            return
+        if self._unsent_audit or self.audit_queue.full():
+            self._unsent_audit.append(event)
+            return
+        try:
+            self.audit_queue.put_nowait(event)
+        except Exception:  # e.g. QueueShutDown
+            self._unsent_audit.append(event)
+
+    def has_unsent_audit(self) -> bool:
+        return bool(self._unsent_audit)
 
     def _check_buy_unlocked(
         self,
@@ -413,6 +460,51 @@ class AsyncPortfolioState:
             )
             return net_proceeds
 
+    def _settle_order(self, order: PendingOrder, filled: int) -> None:
+        """Settle a reserved decorator order given its filled quantity. Synchronous: no await."""
+        _, commission, filled_cost = self.calculate_buy_cost(order.exec_price, filled)
+        self.reserved_cash -= order.total_cost
+        self.settled_cash += order.total_cost - filled_cost  # release whatever did not fill
+        remaining = self.pending_qty.get(order.symbol, 0) - order.qty
+        if remaining:
+            self.pending_qty[order.symbol] = remaining
+        else:
+            self.pending_qty.pop(order.symbol, None)
+        if filled:
+            self.unsettled_share_lots.append(
+                SettlementLot(symbol=order.symbol, qty=filled, clears_at_day=order.clears_at_day)
+            )
+            # The lot is recorded before the audit row, so an audit failure cannot hide a fill
+            self._emit_audit_unlocked(
+                AuditEvent(
+                    event_type="ORDER_FILLED",
+                    exchange_ts_ms=order.exchange_ts_ms,
+                    symbol=order.symbol,
+                    side=OrderSide.BUY.value,
+                    qty=filled,
+                    exec_price=str(order.exec_price),
+                    commission_bdt=str(commission),
+                    settled_cash_after_bdt=str(self.settled_cash),
+                    reason="BROKER_FILL",
+                )
+            )
+
+    async def resolve_unknown(self, order_id: int, filled_qty: int) -> None:
+        """Settle an UNKNOWN decorator order, named by its order_id, from a broker status query."""
+        _require_int("order_id", order_id, 1)
+        _require_int("filled_qty", filled_qty, 0)
+        async with self._lock:
+            matches = [o for o in self.unknown_orders if o.order_id == order_id]
+            if len(matches) != 1:
+                raise KeyError(f"no unknown order with id {order_id}")
+            order = matches[0]
+            if filled_qty > order.qty:
+                raise ValueError(f"filled_qty {filled_qty} exceeds ordered {order.qty}")
+            if filled_qty:
+                self._require_audit_capacity()
+            self.unknown_orders.remove(order)
+            self._settle_order(order, filled_qty)
+
     async def advance_trading_day(self, days: int = 1) -> None:
         """Rolls the DSE settlement calendar forward and matures eligible lots and cash."""
         _require_int("days", days, 1)
@@ -437,17 +529,26 @@ class AsyncPortfolioState:
             self.unsettled_cash = remaining_cash
 
 
+def _checked_fill(filled: object, qty: int) -> int:
+    if not isinstance(filled, int) or isinstance(filled, bool) or not 0 <= filled <= qty:
+        raise ValueError(f"broker must return the filled quantity (int, 0..{qty}), got {filled!r}")
+    return filled
+
+
 def async_risk_guard(
     portfolio: AsyncPortfolioState,
 ) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
     """
-    Decorator for a broker order coroutine. The order is priced from a MarketTick, not a
-    caller-supplied price, and passes the same pre-trade checks as the tick path (watermark,
-    latency, circuit, drawdown, cash, exposure). Cash is reserved before the broker call
-    and rolled back on any exit, including cancellation.
+    Decorator for a broker order coroutine. The order is priced from a MarketTick and passes the
+    same pre-trade checks as the tick path. Cash is reserved before the broker call.
+
+    Broker contract: the coroutine returns the filled quantity (int, 0..qty). Settlement:
+      - returns n: n shares are recorded as a lot, the unfilled cash is released, and an audit row is written;
+      - raises BrokerRejectedError: nothing filled, all cash is released;
+      - any other exception, or cancellation: the outcome is UNKNOWN. Cash and quantity stay
+        reserved in portfolio.unknown_orders until resolve_unknown() settles them.
 
     The wrapped coroutine is called as func(symbol, qty, exec_price, *args, **kwargs).
-    Limitation: this path emits no audit row. Use ingest_tick_and_buy for recorded fills.
     """
     def decorator(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
         @functools.wraps(func)
@@ -461,42 +562,40 @@ def async_risk_guard(
             _require_qty(qty)
             _require_int("signal_generated_ts_ms", signal_generated_ts_ms, 0)
             lag = 3 if tick.category == ShareCategory.Z else 2
-            symbol = tick.symbol
 
-            # Step 1: shared pre-trade checks, then atomic cash reservation
+            # Step 1: shared pre-trade checks, audit capacity, then atomic cash reservation
             async with portfolio._lock:
                 exec_price, _, total_cost = portfolio._check_buy_unlocked(
                     tick, qty, signal_generated_ts_ms, MIN_NETWORK_LATENCY_MS
                 )
+                portfolio._require_audit_capacity()
                 portfolio.settled_cash -= total_cost
                 portfolio.reserved_cash += total_cost
-                portfolio.pending_qty[symbol] = portfolio.pending_qty.get(symbol, 0) + qty
-                clears_at_day = portfolio.current_day + lag  # fixed at order time
+                portfolio.pending_qty[tick.symbol] = portfolio.pending_qty.get(tick.symbol, 0) + qty
+                order_id = portfolio._next_order_id
+                portfolio._next_order_id += 1
+                order = PendingOrder(
+                    order_id=order_id,
+                    symbol=tick.symbol,
+                    qty=qty,
+                    exec_price=exec_price,
+                    total_cost=total_cost,
+                    clears_at_day=portfolio.current_day + lag,  # fixed at order time
+                    exchange_ts_ms=tick.exchange_ts_ms,
+                )
 
-            # Finalisation is synchronous: it mutates state with no await, so it cannot be
-            # interrupted by cancellation and cannot leave reserved cash half-released.
-            def _finalize(filled: bool) -> None:
-                portfolio.reserved_cash -= total_cost
-                remaining = portfolio.pending_qty.get(symbol, 0) - qty
-                if remaining:
-                    portfolio.pending_qty[symbol] = remaining
-                else:
-                    portfolio.pending_qty.pop(symbol, None)
-                if filled:
-                    portfolio.unsettled_share_lots.append(
-                        SettlementLot(symbol=symbol, qty=qty, clears_at_day=clears_at_day)
-                    )
-                else:
-                    portfolio.settled_cash += total_cost
-
-            # Step 2: broker call outside the lock; roll back on any exit (incl. cancellation)
+            # Step 2: broker call outside the lock. Settlement is synchronous (no await), so a
+            # cancellation cannot land between the broker's answer and the books being updated.
             try:
-                result = await func(symbol, qty, exec_price, *args, **kwargs)
-            except BaseException:  # includes CancelledError from wait_for timeouts
-                _finalize(filled=False)
+                filled = _checked_fill(await func(tick.symbol, qty, exec_price, *args, **kwargs), qty)
+            except BrokerRejectedError:
+                portfolio._settle_order(order, 0)
                 raise
-            _finalize(filled=True)
-            return result
+            except BaseException:  # includes cancellation and timeouts: the broker may have filled
+                portfolio.unknown_orders.append(order)
+                raise
+            portfolio._settle_order(order, filled)
+            return filled
 
         return wrapper
     return decorator

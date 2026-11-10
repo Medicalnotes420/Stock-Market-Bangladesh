@@ -97,6 +97,10 @@ class CircuitBreakerLiquidityError(RiskViolationError):
     """Raised when price is pinned at DSE daily circuit limits or L1 volume is zero."""
 
 
+class BrokerRejectedError(Exception):
+    """The broker explicitly refused the order, so nothing was filled and its cash is released."""
+
+
 @dataclass(frozen=True)
 class MarketTick:
     symbol: str
@@ -128,6 +132,18 @@ class SettlementLot:
     symbol: str
     qty: int
     clears_at_day: int
+
+
+@dataclass
+class PendingOrder:
+    """A decorator order whose broker outcome is not yet settled; its cash and quantity stay reserved."""
+    symbol: str
+    qty: int
+    exec_price: Decimal
+    total_cost: Decimal
+    clears_at_day: int
+    exchange_ts_ms: int
+    order_id: int
 
 
 @dataclass
@@ -165,6 +181,7 @@ class AsyncPortfolioState:
         commission_rate: Decimal = DSE_COMMISSION_RATE,
         current_trading_day: int = 1,
         audit_queue: Optional[asyncio.Queue[Optional[AuditEvent]]] = None,
+        audit_guard: Optional[Callable[[], None]] = None,
     ) -> None:
         self._lock = asyncio.Lock()
         _require_decimal("initial_cash", initial_cash)
@@ -192,7 +209,14 @@ class AsyncPortfolioState:
         self.last_prices: Dict[str, Decimal] = {}
         # Quantity reserved by decorator orders still awaiting the broker; counts toward exposure
         self.pending_qty: Dict[str, int] = {}
+        # Decorator orders whose broker outcome is unknown; they hold cash until resolve_unknown()
+        self.unknown_orders: List[PendingOrder] = []
+        self._next_order_id: int = 1
+        # Audit rows that could not be queued after a fill; the next fill refuses until they are sent (audit M1)
+        self._unsent_audit: List[AuditEvent] = []
         self.audit_queue = audit_queue
+        # Raises if the audit writer has died; run inside the lock, so a fill cannot race it
+        self.audit_guard = audit_guard
 
     @property
     def available_cash(self) -> Decimal:
@@ -228,13 +252,36 @@ class AsyncPortfolioState:
         return self.settled_cash + self.reserved_cash + receivables + inventory
 
     def _require_audit_capacity(self) -> None:
-        """Fail closed: refuse to fill when the audit queue cannot take the row (audit F10)."""
-        if self.audit_queue is not None and self.audit_queue.full():
+        """Fail closed: refuse to fill when the audit writer is dead or rows cannot be queued."""
+        if self.audit_guard is not None:
+            self.audit_guard()
+        self.flush_unsent_audit()
+        if self._unsent_audit or (self.audit_queue is not None and self.audit_queue.full()):
             raise RuntimeError("audit queue full: refusing to fill without an audit row")
 
+    def flush_unsent_audit(self) -> None:
+        """Queue parked audit rows that fit now. Synchronous: no await, so no interleaving with fills."""
+        while self._unsent_audit and self.audit_queue is not None and not self.audit_queue.full():
+            try:
+                self.audit_queue.put_nowait(self._unsent_audit[0])
+            except Exception:  # e.g. QueueShutDown: the row stays parked
+                return
+            self._unsent_audit.pop(0)  # pop only after the row is queued
+
     def _emit_audit_unlocked(self, event: AuditEvent) -> None:
-        if self.audit_queue is not None:
-            self.audit_queue.put_nowait(event)  # capacity guaranteed by _require_audit_capacity
+        """Never raises: a row that cannot be queued is parked, in order, and blocks the next fill."""
+        if self.audit_queue is None:
+            return
+        if self._unsent_audit or self.audit_queue.full():
+            self._unsent_audit.append(event)
+            return
+        try:
+            self.audit_queue.put_nowait(event)
+        except Exception:  # e.g. QueueShutDown
+            self._unsent_audit.append(event)
+
+    def has_unsent_audit(self) -> bool:
+        return bool(self._unsent_audit)
 
     def _check_buy_unlocked(
         self,
@@ -428,6 +475,51 @@ class AsyncPortfolioState:
             )
             return net_proceeds
 
+    def _settle_order(self, order: PendingOrder, filled: int) -> None:
+        """Settle a reserved decorator order given its filled quantity. Synchronous: no await."""
+        _, commission, filled_cost = self.calculate_buy_cost(order.exec_price, filled)
+        self.reserved_cash -= order.total_cost
+        self.settled_cash += order.total_cost - filled_cost  # release whatever did not fill
+        remaining = self.pending_qty.get(order.symbol, 0) - order.qty
+        if remaining:
+            self.pending_qty[order.symbol] = remaining
+        else:
+            self.pending_qty.pop(order.symbol, None)
+        if filled:
+            self.unsettled_share_lots.append(
+                SettlementLot(symbol=order.symbol, qty=filled, clears_at_day=order.clears_at_day)
+            )
+            # The lot is recorded before the audit row, so an audit failure cannot hide a fill
+            self._emit_audit_unlocked(
+                AuditEvent(
+                    event_type="ORDER_FILLED",
+                    exchange_ts_ms=order.exchange_ts_ms,
+                    symbol=order.symbol,
+                    side=OrderSide.BUY.value,
+                    qty=filled,
+                    exec_price=str(order.exec_price),
+                    commission_bdt=str(commission),
+                    settled_cash_after_bdt=str(self.settled_cash),
+                    reason="BROKER_FILL",
+                )
+            )
+
+    async def resolve_unknown(self, order_id: int, filled_qty: int) -> None:
+        """Settle an UNKNOWN decorator order, named by its order_id, from a broker status query."""
+        _require_int("order_id", order_id, 1)
+        _require_int("filled_qty", filled_qty, 0)
+        async with self._lock:
+            matches = [o for o in self.unknown_orders if o.order_id == order_id]
+            if len(matches) != 1:
+                raise KeyError(f"no unknown order with id {order_id}")
+            order = matches[0]
+            if filled_qty > order.qty:
+                raise ValueError(f"filled_qty {filled_qty} exceeds ordered {order.qty}")
+            if filled_qty:
+                self._require_audit_capacity()
+            self.unknown_orders.remove(order)
+            self._settle_order(order, filled_qty)
+
     async def advance_trading_day(self, days: int = 1) -> None:
         """Rolls the DSE settlement calendar forward and matures eligible lots and cash."""
         _require_int("days", days, 1)
@@ -452,17 +544,26 @@ class AsyncPortfolioState:
             self.unsettled_cash = remaining_cash
 
 
+def _checked_fill(filled: object, qty: int) -> int:
+    if not isinstance(filled, int) or isinstance(filled, bool) or not 0 <= filled <= qty:
+        raise ValueError(f"broker must return the filled quantity (int, 0..{qty}), got {filled!r}")
+    return filled
+
+
 def async_risk_guard(
     portfolio: AsyncPortfolioState,
 ) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
     """
-    Decorator for a broker order coroutine. The order is priced from a MarketTick, not a
-    caller-supplied price, and passes the same pre-trade checks as the tick path (watermark,
-    latency, circuit, drawdown, cash, exposure). Cash is reserved before the broker call
-    and rolled back on any exit, including cancellation.
+    Decorator for a broker order coroutine. The order is priced from a MarketTick and passes the
+    same pre-trade checks as the tick path. Cash is reserved before the broker call.
+
+    Broker contract: the coroutine returns the filled quantity (int, 0..qty). Settlement:
+      - returns n: n shares are recorded as a lot, the unfilled cash is released, and an audit row is written;
+      - raises BrokerRejectedError: nothing filled, all cash is released;
+      - any other exception, or cancellation: the outcome is UNKNOWN. Cash and quantity stay
+        reserved in portfolio.unknown_orders until resolve_unknown() settles them.
 
     The wrapped coroutine is called as func(symbol, qty, exec_price, *args, **kwargs).
-    Limitation: this path emits no audit row. Use ingest_tick_and_buy for recorded fills.
     """
     def decorator(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
         @functools.wraps(func)
@@ -476,42 +577,40 @@ def async_risk_guard(
             _require_qty(qty)
             _require_int("signal_generated_ts_ms", signal_generated_ts_ms, 0)
             lag = 3 if tick.category == ShareCategory.Z else 2
-            symbol = tick.symbol
 
-            # Step 1: shared pre-trade checks, then atomic cash reservation
+            # Step 1: shared pre-trade checks, audit capacity, then atomic cash reservation
             async with portfolio._lock:
                 exec_price, _, total_cost = portfolio._check_buy_unlocked(
                     tick, qty, signal_generated_ts_ms, MIN_NETWORK_LATENCY_MS
                 )
+                portfolio._require_audit_capacity()
                 portfolio.settled_cash -= total_cost
                 portfolio.reserved_cash += total_cost
-                portfolio.pending_qty[symbol] = portfolio.pending_qty.get(symbol, 0) + qty
-                clears_at_day = portfolio.current_day + lag  # fixed at order time
+                portfolio.pending_qty[tick.symbol] = portfolio.pending_qty.get(tick.symbol, 0) + qty
+                order_id = portfolio._next_order_id
+                portfolio._next_order_id += 1
+                order = PendingOrder(
+                    order_id=order_id,
+                    symbol=tick.symbol,
+                    qty=qty,
+                    exec_price=exec_price,
+                    total_cost=total_cost,
+                    clears_at_day=portfolio.current_day + lag,  # fixed at order time
+                    exchange_ts_ms=tick.exchange_ts_ms,
+                )
 
-            # Finalisation is synchronous: it mutates state with no await, so it cannot be
-            # interrupted by cancellation and cannot leave reserved cash half-released.
-            def _finalize(filled: bool) -> None:
-                portfolio.reserved_cash -= total_cost
-                remaining = portfolio.pending_qty.get(symbol, 0) - qty
-                if remaining:
-                    portfolio.pending_qty[symbol] = remaining
-                else:
-                    portfolio.pending_qty.pop(symbol, None)
-                if filled:
-                    portfolio.unsettled_share_lots.append(
-                        SettlementLot(symbol=symbol, qty=qty, clears_at_day=clears_at_day)
-                    )
-                else:
-                    portfolio.settled_cash += total_cost
-
-            # Step 2: broker call outside the lock; roll back on any exit (incl. cancellation)
+            # Step 2: broker call outside the lock. Settlement is synchronous (no await), so a
+            # cancellation cannot land between the broker's answer and the books being updated.
             try:
-                result = await func(symbol, qty, exec_price, *args, **kwargs)
-            except BaseException:  # includes CancelledError from wait_for timeouts
-                _finalize(filled=False)
+                filled = _checked_fill(await func(tick.symbol, qty, exec_price, *args, **kwargs), qty)
+            except BrokerRejectedError:
+                portfolio._settle_order(order, 0)
                 raise
-            _finalize(filled=True)
-            return result
+            except BaseException:  # includes cancellation and timeouts: the broker may have filled
+                portfolio.unknown_orders.append(order)
+                raise
+            portfolio._settle_order(order, filled)
+            return filled
 
         return wrapper
     return decorator
@@ -522,8 +621,8 @@ def async_risk_guard(
 # ===========================================================================
 FILES['test_async_risk_guard.py'] = r'''"""
 test_async_risk_guard.py
-Pytest-asyncio concurrency suite for the decorator buy path: atomic cash reservation,
-double-spend prevention, rollback on broker failure, and the shared tick pre-checks.
+Pytest-asyncio suite for the decorator buy path: priced from a tick, shared pre-checks,
+the broker contract (filled quantity, rejection, unknown outcome), and audit rows.
 """
 
 from __future__ import annotations
@@ -535,6 +634,7 @@ import pytest
 
 from async_risk_guard import (
     AsyncPortfolioState,
+    BrokerRejectedError,
     CircuitBreakerLiquidityError,
     MarketTick,
     MaxDrawdownCircuitBreakerError,
@@ -578,15 +678,15 @@ async def test_concurrent_ticks_prevent_double_spending():
     tick = make_tick(ts=1_000, ask="200.00")
 
     @async_risk_guard(portfolio)
-    async def execute_buy(symbol: str, qty: int, price: Decimal) -> str:
+    async def execute_buy(symbol: str, qty: int, price: Decimal) -> int:
         await asyncio.sleep(0.01)  # Simulate network round-trip
-        return f"FILLED:{symbol}:{qty}@{price}"
+        return qty
 
     results = await asyncio.gather(
         *(execute_buy(tick, 100, 900) for _ in range(10)), return_exceptions=True
     )
 
-    fills = [r for r in results if isinstance(r, str)]
+    fills = [r for r in results if r == 100]
     rejections = [r for r in results if isinstance(r, SettlementViolationError)]
     assert len(fills) == 1
     assert len(rejections) == 9
@@ -595,22 +695,134 @@ async def test_concurrent_ticks_prevent_double_spending():
 
 
 @pytest.mark.asyncio
-async def test_atomic_rollback_restores_cash_on_broker_exception():
-    """If the downstream broker coroutine raises, reserved cash rolls back."""
+async def test_broker_rejection_releases_cash():
     portfolio = AsyncPortfolioState(initial_cash=Decimal("100000.00"), max_position_pct=Decimal("0.50"))
 
     @async_risk_guard(portfolio)
-    async def failing_broker_order(symbol: str, qty: int, price: Decimal) -> None:
+    async def rejected_order(symbol: str, qty: int, price: Decimal) -> int:
+        raise BrokerRejectedError("DSE rejected: price outside band")
+
+    with pytest.raises(BrokerRejectedError):
+        await rejected_order(make_tick(ts=1_000, ask="150.00", symbol="BXPHARMA"), 100, 900)
+
+    assert portfolio.settled_cash == Decimal("100000.00")
+    assert portfolio.reserved_cash == Decimal("0.00")
+    assert portfolio.unsettled_share_lots == []
+    assert portfolio.pending_qty == {}
+    assert portfolio.unknown_orders == []
+
+
+@pytest.mark.asyncio
+async def test_connection_loss_holds_cash_as_unknown_until_resolved():
+    """A dropped connection may still have filled at the exchange, so cash stays reserved."""
+    portfolio = AsyncPortfolioState(initial_cash=Decimal("100000.00"), max_position_pct=Decimal("0.50"))
+
+    @async_risk_guard(portfolio)
+    async def failing_broker_order(symbol: str, qty: int, price: Decimal) -> int:
         await asyncio.sleep(0.005)
         raise ConnectionResetError("DSE FIX gateway timeout")
 
     with pytest.raises(ConnectionResetError):
         await failing_broker_order(make_tick(ts=1_000, ask="150.00", symbol="BXPHARMA"), 100, 900)
 
+    assert len(portfolio.unknown_orders) == 1
+    assert portfolio.reserved_cash == Decimal("15045.00")  # 100 x 150.00 + 0.30% commission
+    assert portfolio.pending_qty == {"BXPHARMA": 100}  # still counts toward exposure
+
+    await portfolio.resolve_unknown(portfolio.unknown_orders[0].order_id, 0)  # broker query: not filled
     assert portfolio.settled_cash == Decimal("100000.00")
     assert portfolio.reserved_cash == Decimal("0.00")
-    assert portfolio.unsettled_share_lots == []
     assert portfolio.pending_qty == {}
+
+
+@pytest.mark.asyncio
+async def test_resolve_unknown_records_a_fill_the_broker_confirms():
+    portfolio = AsyncPortfolioState(initial_cash=Decimal("100000.00"), max_position_pct=Decimal("0.50"))
+
+    @async_risk_guard(portfolio)
+    async def slow_broker_order(symbol: str, qty: int, price: Decimal) -> int:
+        await asyncio.sleep(10)
+        return qty
+
+    task = asyncio.create_task(slow_broker_order(make_tick(ts=1_000, ask="150.00", symbol="BXPHARMA"), 100, 900))
+    await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert len(portfolio.unknown_orders) == 1
+    await portfolio.resolve_unknown(portfolio.unknown_orders[0].order_id, 100)  # broker confirms 100
+    assert portfolio.unknown_orders == []
+    assert portfolio.unsettled_share_lots[0].qty == 100
+    assert portfolio.reserved_cash == Decimal("0.00")
+    assert portfolio.pending_qty == {}
+
+
+@pytest.mark.asyncio
+async def test_partial_fill_records_filled_shares_and_releases_the_rest():
+    portfolio = AsyncPortfolioState(initial_cash=Decimal("100000.00"), max_position_pct=Decimal("1.00"))
+
+    @async_risk_guard(portfolio)
+    async def partial(symbol: str, qty: int, price: Decimal) -> int:
+        return 60  # of 100 ordered
+
+    await partial(make_tick(ts=1_000, ask="100.00"), 100, 900)
+
+    assert portfolio.unsettled_share_lots[0].qty == 60
+    # reserved 10,030.00 for 100; 60 filled costs 6,018.00; 4,012.00 released
+    assert portfolio.settled_cash == Decimal("93982.00")
+    assert portfolio.reserved_cash == Decimal("0.00")
+    assert portfolio.pending_qty == {}
+
+
+@pytest.mark.asyncio
+async def test_invalid_broker_answer_is_treated_as_unknown():
+    portfolio = AsyncPortfolioState(initial_cash=Decimal("100000.00"), max_position_pct=Decimal("1.00"))
+
+    @async_risk_guard(portfolio)
+    async def bad_answer(symbol: str, qty: int, price: Decimal) -> str:
+        return "FILLED"
+
+    with pytest.raises(ValueError, match="filled quantity"):
+        await bad_answer(make_tick(ts=1_000, ask="100.00"), 10, 900)
+    assert len(portfolio.unknown_orders) == 1
+
+
+@pytest.mark.asyncio
+async def test_successful_fill_writes_an_audit_row():
+    queue: asyncio.Queue = asyncio.Queue()
+    portfolio = AsyncPortfolioState(
+        initial_cash=Decimal("100000.00"), max_position_pct=Decimal("1.00"), audit_queue=queue
+    )
+
+    @async_risk_guard(portfolio)
+    async def buy(symbol: str, qty: int, price: Decimal) -> int:
+        return qty
+
+    await buy(make_tick(ts=1_000, ask="100.00"), 10, 900)
+    event = queue.get_nowait()
+    assert event.event_type == "ORDER_FILLED"
+    assert event.qty == 10
+    assert event.symbol == "GP"
+
+
+@pytest.mark.asyncio
+async def test_dead_audit_writer_blocks_decorator_reservation():
+    def writer_died() -> None:
+        raise RuntimeError("audit writer died")
+
+    portfolio = AsyncPortfolioState(
+        initial_cash=Decimal("100000.00"), max_position_pct=Decimal("1.00"), audit_guard=writer_died
+    )
+
+    @async_risk_guard(portfolio)
+    async def buy(symbol: str, qty: int, price: Decimal) -> int:
+        return qty
+
+    with pytest.raises(RuntimeError, match="audit writer died"):
+        await buy(make_tick(ts=1_000, ask="100.00"), 10, 900)
+    assert portfolio.settled_cash == Decimal("100000.00")
+    assert portfolio.reserved_cash == Decimal("0.00")
 
 
 @pytest.mark.asyncio
@@ -622,8 +834,8 @@ async def test_position_size_and_drawdown_circuit_breakers():
     )
 
     @async_risk_guard(portfolio)
-    async def place_order(symbol: str, qty: int, price: Decimal) -> str:
-        return "OK"
+    async def place_order(symbol: str, qty: int, price: Decimal) -> int:
+        return qty
 
     # 1. 150 x 150 = 22,500 BDT > 20% of 100,000 -> position limit
     with pytest.raises(PositionLimitExceededError):
@@ -635,8 +847,7 @@ async def test_position_size_and_drawdown_circuit_breakers():
         await place_order(make_tick(ts=2_000, ask="150.00", symbol="SQURPHARMA"), 10, 1_900)
 
 
-@pytest.mark.asyncio
-async def test_float_price_is_rejected_when_the_tick_is_built():
+def test_float_price_is_rejected_when_the_tick_is_built():
     """A float price cannot reach the decorator: MarketTick refuses it first."""
     with pytest.raises(TypeError):
         MarketTick(symbol="GP", category=ShareCategory.A, exchange_ts_ms=1,
@@ -648,8 +859,8 @@ async def test_decorator_rejects_negative_qty_without_moving_cash():
     portfolio = AsyncPortfolioState(initial_cash=Decimal("100000.00"), max_position_pct=Decimal("0.50"))
 
     @async_risk_guard(portfolio)
-    async def place_order(symbol: str, qty: int, price: Decimal) -> str:
-        return "OK"
+    async def place_order(symbol: str, qty: int, price: Decimal) -> int:
+        return qty
 
     with pytest.raises(ValueError):
         await place_order(make_tick(ts=1_000), -100, 900)
@@ -657,8 +868,7 @@ async def test_decorator_rejects_negative_qty_without_moving_cash():
     assert portfolio.reserved_cash == Decimal("0.00")
 
 
-@pytest.mark.asyncio
-async def test_unknown_category_cannot_reach_the_decorator():
+def test_unknown_category_cannot_reach_the_decorator():
     """Category is taken from the tick, so an unknown value fails when the tick is built."""
     with pytest.raises(ValueError):
         MarketTick(symbol="GP", category="z", exchange_ts_ms=1,
@@ -667,12 +877,11 @@ async def test_unknown_category_cannot_reach_the_decorator():
 
 @pytest.mark.asyncio
 async def test_decorator_rejects_look_ahead_order_using_the_tick_gate():
-    """The decorator now runs the tick latency gate: a fill inside the 15 ms window is refused."""
     portfolio = AsyncPortfolioState(initial_cash=Decimal("100000.00"))
 
     @async_risk_guard(portfolio)
-    async def place_order(symbol: str, qty: int, price: Decimal) -> str:
-        return "OK"
+    async def place_order(symbol: str, qty: int, price: Decimal) -> int:
+        return qty
 
     with pytest.raises(TemporalLeakageError, match="Look-ahead"):
         await place_order(make_tick(ts=1_000), 1, 1_000)
@@ -684,8 +893,8 @@ async def test_decorator_rejects_out_of_order_tick():
     portfolio = AsyncPortfolioState(initial_cash=Decimal("100000.00"))
 
     @async_risk_guard(portfolio)
-    async def place_order(symbol: str, qty: int, price: Decimal) -> str:
-        return "OK"
+    async def place_order(symbol: str, qty: int, price: Decimal) -> int:
+        return qty
 
     await place_order(make_tick(ts=2_000), 1, 1_000)
     with pytest.raises(TemporalLeakageError, match="Out-of-order"):
@@ -697,8 +906,8 @@ async def test_decorator_refuses_penalised_fill_above_upper_circuit():
     portfolio = AsyncPortfolioState(initial_cash=Decimal("500000.00"))
 
     @async_risk_guard(portfolio)
-    async def place_order(symbol: str, qty: int, price: Decimal) -> str:
-        return "OK"
+    async def place_order(symbol: str, qty: int, price: Decimal) -> int:
+        return qty
 
     tick = MarketTick(symbol="GP", category=ShareCategory.A, exchange_ts_ms=1_000,
                       bid=Decimal("99.90"), ask=Decimal("100.00"), ask_volume=50,
@@ -709,33 +918,12 @@ async def test_decorator_refuses_penalised_fill_above_upper_circuit():
 
 
 @pytest.mark.asyncio
-async def test_cancelled_broker_call_releases_reserved_cash():
-    """A cancelled (e.g. wait_for timeout) broker call must not strand reserved cash."""
-    portfolio = AsyncPortfolioState(initial_cash=Decimal("100000.00"), max_position_pct=Decimal("0.50"))
-
-    @async_risk_guard(portfolio)
-    async def slow_broker_order(symbol: str, qty: int, price: Decimal) -> None:
-        await asyncio.sleep(10)
-
-    task = asyncio.create_task(slow_broker_order(make_tick(ts=1_000, ask="150.00", symbol="BXPHARMA"), 100, 900))
-    await asyncio.sleep(0.01)
-    assert portfolio.reserved_cash > 0
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-
-    assert portfolio.settled_cash == Decimal("100000.00")
-    assert portfolio.reserved_cash == Decimal("0.00")
-    assert portfolio.pending_qty == {}
-
-
-@pytest.mark.asyncio
 async def test_category_z_lot_through_decorator_matures_at_t3():
     portfolio = AsyncPortfolioState(initial_cash=Decimal("100000.00"), max_position_pct=Decimal("0.50"))
 
     @async_risk_guard(portfolio)
-    async def buy(symbol: str, qty: int, price: Decimal) -> str:
-        return "OK"
+    async def buy(symbol: str, qty: int, price: Decimal) -> int:
+        return qty
 
     await buy(make_tick(ts=1_000, ask="45.00", category=ShareCategory.Z, symbol="Z_JUTE"), 10, 900)
     await portfolio.advance_trading_day(days=2)
@@ -750,8 +938,8 @@ async def test_rejected_decorator_order_marks_tick_bid_not_order_price():
     portfolio = AsyncPortfolioState(initial_cash=Decimal("100000.00"), max_position_pct=Decimal("1.00"))
 
     @async_risk_guard(portfolio)
-    async def place_order(symbol: str, qty: int, price: Decimal) -> str:
-        return "OK"
+    async def place_order(symbol: str, qty: int, price: Decimal) -> int:
+        return qty
 
     tick = make_tick(ts=1_000, ask="100.00")
     with pytest.raises(SettlementViolationError):
@@ -769,16 +957,16 @@ async def test_concurrent_orders_cannot_exceed_position_limit():
     )
 
     @async_risk_guard(portfolio)
-    async def buy(symbol: str, qty: int, price: Decimal) -> str:
+    async def buy(symbol: str, qty: int, price: Decimal) -> int:
         await asyncio.sleep(0.01)  # broker round-trip: every order is in flight at once
-        return "FILLED"
+        return qty
 
     tick = make_tick(ts=1_000, ask="100.00")
     results = await asyncio.gather(
         *(buy(tick, 200, 900) for _ in range(4)),
         return_exceptions=True,
     )
-    fills = [r for r in results if r == "FILLED"]
+    fills = [r for r in results if r == 200]
     limits = [r for r in results if isinstance(r, PositionLimitExceededError)]
     assert len(fills) == 1
     assert len(limits) == 3
@@ -787,17 +975,124 @@ async def test_concurrent_orders_cannot_exceed_position_limit():
 
 
 @pytest.mark.asyncio
-async def test_failed_broker_call_keeps_tick_mark_and_restores_cash():
+async def test_fill_during_full_audit_queue_is_recorded_and_next_fill_fails_closed():
+    """Audit M1: a fill whose audit row cannot be queued still returns normally; the next fill refuses."""
+    queue: asyncio.Queue = asyncio.Queue(maxsize=1)
+    portfolio = AsyncPortfolioState(
+        initial_cash=Decimal("100000.00"), max_position_pct=Decimal("1.00"), audit_queue=queue
+    )
+
+    @async_risk_guard(portfolio)
+    async def buy(symbol: str, qty: int, price: Decimal) -> int:
+        queue.put_nowait("other producer")  # the queue fills during the broker call
+        return qty
+
+    assert await buy(make_tick(ts=1_000, ask="100.00"), 10, 900) == 10
+    assert portfolio.unsettled_share_lots[0].qty == 10
+    with pytest.raises(RuntimeError, match="audit queue full"):
+        await buy(make_tick(ts=2_000, ask="100.00"), 1, 1_900)
+
+
+@pytest.mark.asyncio
+async def test_resolve_unknown_settles_only_the_named_order():
+    """Audit M2: resolution is by order id, so a stale or repeated call cannot settle another order."""
     portfolio = AsyncPortfolioState(initial_cash=Decimal("100000.00"), max_position_pct=Decimal("1.00"))
 
     @async_risk_guard(portfolio)
-    async def failing_order(symbol: str, qty: int, price: Decimal) -> None:
-        raise ConnectionResetError("gateway timeout")
+    async def lost(symbol: str, qty: int, price: Decimal) -> int:
+        raise ConnectionResetError("lost")
+
+    tick = make_tick(ts=1_000, ask="100.00")
+    for _ in range(2):
+        with pytest.raises(ConnectionResetError):
+            await lost(tick, 10, 900)
+
+    first, second = [o.order_id for o in portfolio.unknown_orders]
+    await portfolio.resolve_unknown(second, 5)
+    assert [o.order_id for o in portfolio.unknown_orders] == [first]
+    with pytest.raises(KeyError):
+        await portfolio.resolve_unknown(second, 5)  # already settled
+    with pytest.raises(KeyError):
+        await portfolio.resolve_unknown(999, 0)  # unknown id
+
+
+@pytest.mark.asyncio
+async def test_parked_audit_row_is_sent_by_flush_audit():
+    """Audit F1: a parked row must reach the log through flush_audit, not sit in memory."""
+    queue: asyncio.Queue = asyncio.Queue(maxsize=1)
+    portfolio = AsyncPortfolioState(
+        initial_cash=Decimal("100000.00"), max_position_pct=Decimal("1.00"), audit_queue=queue
+    )
+
+    @async_risk_guard(portfolio)
+    async def buy(symbol: str, qty: int, price: Decimal) -> int:
+        queue.put_nowait("other producer")
+        return qty
+
+    await buy(make_tick(ts=1_000, ask="100.00"), 10, 900)  # the row is parked
+    queue.get_nowait()  # the writer drains the queue
+    portfolio.flush_unsent_audit()
+    assert not portfolio.has_unsent_audit()
+    assert queue.get_nowait().event_type == "ORDER_FILLED"
+
+
+@pytest.mark.asyncio
+async def test_shut_down_queue_parks_the_row_and_refuses_the_next_fill():
+    """Audit F2: put_nowait on a shut-down queue must park the row, not lose it or raise after the fill."""
+    if not hasattr(asyncio.Queue, "shutdown"):
+        pytest.skip("asyncio.Queue.shutdown needs Python 3.13+")
+    queue: asyncio.Queue = asyncio.Queue(maxsize=10)
+    queue.shutdown()
+    portfolio = AsyncPortfolioState(
+        initial_cash=Decimal("100000.00"), max_position_pct=Decimal("1.00"), audit_queue=queue
+    )
+
+    @async_risk_guard(portfolio)
+    async def buy(symbol: str, qty: int, price: Decimal) -> int:
+        return qty
+
+    assert await buy(make_tick(ts=1_000, ask="100.00"), 10, 900) == 10
+    assert len(portfolio._unsent_audit) == 1
+    with pytest.raises(RuntimeError, match="audit queue full"):
+        await buy(make_tick(ts=2_000, ask="100.00"), 1, 1_900)
+
+
+@pytest.mark.asyncio
+async def test_partial_resolve_releases_only_the_unfilled_cash_and_leaves_other_orders():
+    """Audit F3: 10 shares at 100.00 reserve 1,003.00; filling 5 releases 501.50 of it."""
+    portfolio = AsyncPortfolioState(initial_cash=Decimal("100000.00"), max_position_pct=Decimal("1.00"))
+
+    @async_risk_guard(portfolio)
+    async def lost(symbol: str, qty: int, price: Decimal) -> int:
+        raise ConnectionResetError("lost")
+
+    tick = make_tick(ts=1_000, ask="100.00")
+    for _ in range(2):
+        with pytest.raises(ConnectionResetError):
+            await lost(tick, 10, 900)
+
+    _, second = [o.order_id for o in portfolio.unknown_orders]
+    await portfolio.resolve_unknown(second, 5)
+    assert portfolio.settled_cash == Decimal("98495.50")  # 100,000 - 2 x 1,003.00 + 501.50 refund
+    assert portfolio.reserved_cash == Decimal("1003.00")  # the other order is still held
+    assert portfolio.pending_qty == {"GP": 10}
+    assert portfolio.unsettled_share_lots[0].qty == 5
+
+
+@pytest.mark.asyncio
+async def test_resolve_unknown_rejects_a_boolean_id():
+    """Audit F4: True equals 1 in Python; a boolean must not select order 1."""
+    portfolio = AsyncPortfolioState(initial_cash=Decimal("100000.00"), max_position_pct=Decimal("1.00"))
+
+    @async_risk_guard(portfolio)
+    async def lost(symbol: str, qty: int, price: Decimal) -> int:
+        raise ConnectionResetError("lost")
 
     with pytest.raises(ConnectionResetError):
-        await failing_order(make_tick(ts=1_000, ask="100.00"), 1, 900)
-    assert portfolio.last_prices["GP"] == Decimal("99.90")  # market data, not the caller's
-    assert portfolio.settled_cash == Decimal("100000.00")
+        await lost(make_tick(ts=1_000, ask="100.00"), 10, 900)
+    with pytest.raises(ValueError):
+        await portfolio.resolve_unknown(True, 0)
+    assert len(portfolio.unknown_orders) == 1
 '''
 
 # ===========================================================================
@@ -1353,6 +1648,54 @@ async def test_cancelled_before_first_step_still_releases_the_file(tmp_path):
     assert writer._fp.closed
 
 
+def _row(reason: str):
+    from async_risk_guard import AuditEvent
+
+    return AuditEvent(event_type="X", exchange_ts_ms=1, symbol="GP", side="BUY", qty=1,
+                      exec_price="1", commission_bdt="0", settled_cash_after_bdt="0", reason=reason)
+
+
+@pytest.mark.asyncio
+async def test_send_parked_waits_for_room_then_writes_rows_in_order(tmp_path):
+    """Audit M1: parked rows wait while the queue is full, then reach the log in order."""
+    import json
+    from dse_paper_harness import AsyncAuditLogger, _send_parked
+
+    logger = AsyncAuditLogger(log_path=tmp_path / "a.jsonl")
+    logger.start()
+    portfolio = AsyncPortfolioState(initial_cash=Decimal("1000.00"), audit_queue=logger.queue)
+    portfolio._unsent_audit = [_row("1"), _row("2")]
+    await asyncio.wait_for(_send_parked(portfolio, logger), timeout=5)
+    await logger.stop()
+    reasons = [json.loads(line)["reason"] for line in (tmp_path / "a.jsonl").read_text().splitlines()]
+    assert reasons == ["1", "2"]
+    assert not portfolio.has_unsent_audit()
+
+
+@pytest.mark.asyncio
+async def test_send_parked_raises_when_writer_died_and_releases_the_file(tmp_path, monkeypatch):
+    """Audit M1: with a dead writer, parked rows cannot be sent; the call must raise and the file must close."""
+    import dse_paper_harness
+    from dse_paper_harness import AsyncAuditLogger, _send_parked
+
+    def disk_gone(fp, line):
+        raise OSError("disk gone")
+
+    monkeypatch.setattr(dse_paper_harness, "_append_line", disk_gone)
+    logger = AsyncAuditLogger(log_path=tmp_path / "a.jsonl")
+    logger.start()
+    writer = logger._writer
+    await logger.put(_row("trigger"))
+    await asyncio.wait({logger._worker}, timeout=2)
+    portfolio = AsyncPortfolioState(initial_cash=Decimal("1000.00"), audit_queue=logger.queue)
+    portfolio._unsent_audit = [_row("parked")]
+    with pytest.raises(OSError, match="disk gone"):
+        await asyncio.wait_for(_send_parked(portfolio, logger), timeout=2)
+    writer._thread.join(timeout=2)
+    assert writer._fp.closed
+    assert portfolio.has_unsent_audit()  # the parked row was not silently dropped
+
+
 @pytest.mark.asyncio
 async def test_session_with_failing_disk_raises_and_does_not_hang(tmp_path, monkeypatch):
     """Audit finding 2: a session whose every log write fails must raise promptly, not hang."""
@@ -1608,6 +1951,15 @@ async def simulated_dse_stream(num_ticks: int = 12) -> AsyncIterator[MarketTick]
         await asyncio.sleep(0.002)
 
 
+async def _send_parked(portfolio: AsyncPortfolioState, logger: AsyncAuditLogger) -> None:
+    """Queue parked audit rows, waiting while the queue is full. Raises if the writer has died."""
+    while portfolio.has_unsent_audit():
+        logger.check_alive()
+        portfolio.flush_unsent_audit()
+        if portfolio.has_unsent_audit():
+            await asyncio.sleep(0.001)
+
+
 async def run_paper_session(log_path: Path = Path("dse_paper_audit.jsonl")) -> AsyncPortfolioState:
     # The log is append-only: a rerun adds rows rather than erasing the previous session's audit trail
     logger = AsyncAuditLogger(log_path=log_path)
@@ -1618,13 +1970,17 @@ async def run_paper_session(log_path: Path = Path("dse_paper_audit.jsonl")) -> A
         max_position_pct=Decimal("0.30"),
         max_drawdown_pct=Decimal("0.10"),
         audit_queue=logger.queue,
+        audit_guard=logger.check_alive,
     )
 
     staged: Dict[str, List[StagedOrder]] = {}
     try:
         await _run_ticks(portfolio, logger, staged)
     finally:
-        await logger.stop()  # always drain and close the audit file, even on error
+        try:
+            await _send_parked(portfolio, logger)  # rows parked by the decorator path must reach the log
+        finally:
+            await logger.stop()  # always drain and close the audit file, even on error
     return portfolio
 
 
@@ -1636,6 +1992,7 @@ async def _run_ticks(
     seq = 0
     async for tick in simulated_dse_stream(num_ticks=12):
         logger.check_alive()  # a dead writer must stop the session, not let fills pile up unlogged
+        await _send_parked(portfolio, logger)
         # 1. Execute previously staged orders once the latency window has elapsed
         pending = staged.get(tick.symbol, [])
         still_waiting: List[StagedOrder] = []
