@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 bootstrap_dse_quant_repo.py
-Regenerated from the committed sources. Writes the four core DSE quant files
+Regenerated from the current sources. Writes the four core DSE quant files
 into the current directory. Generated: do not hand-edit; regenerate instead.
 Claude Code agent and hook files are managed in git and are not written here.
 """
@@ -29,7 +29,7 @@ from __future__ import annotations
 import asyncio
 import functools
 from dataclasses import dataclass
-from decimal import Decimal, ROUND_CEILING, ROUND_HALF_UP
+from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from enum import Enum
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
@@ -210,8 +210,9 @@ class AsyncPortfolioState:
         slipped = ask_price * (Decimal("1") + slippage_bps / Decimal("10000"))
         exec_price = self.round_to_dse_tick(slipped)
         gross = exec_price * Decimal(qty)
+        # Commission rounds up: a cost to us is never under-reserved
         commission = (gross * self.commission_rate).quantize(
-            Decimal("0.01"), rounding=ROUND_HALF_UP
+            Decimal("0.01"), rounding=ROUND_CEILING
         )
         return exec_price, commission, gross + commission
 
@@ -226,12 +227,14 @@ class AsyncPortfolioState:
             inventory += prices.get(lot.symbol, Decimal("0.00")) * Decimal(lot.qty)
         return self.settled_cash + self.reserved_cash + receivables + inventory
 
+    def _require_audit_capacity(self) -> None:
+        """Fail closed: refuse to fill when the audit queue cannot take the row (audit F10)."""
+        if self.audit_queue is not None and self.audit_queue.full():
+            raise RuntimeError("audit queue full: refusing to fill without an audit row")
+
     def _emit_audit_unlocked(self, event: AuditEvent) -> None:
         if self.audit_queue is not None:
-            try:
-                self.audit_queue.put_nowait(event)
-            except asyncio.QueueFull:
-                pass  # known gap: dropped audit row (see audit F10)
+            self.audit_queue.put_nowait(event)  # capacity guaranteed by _require_audit_capacity
 
     async def ingest_tick_and_buy(
         self,
@@ -277,6 +280,10 @@ class AsyncPortfolioState:
             exec_price, commission, required_cash = self.calculate_buy_cost(
                 tick.ask, qty, slippage_bps=slippage_bps
             )
+            if exec_price > tick.upper_circuit:  # a penalised fill above the circuit cannot print
+                raise CircuitBreakerLiquidityError(
+                    f"{tick.symbol} penalised fill {exec_price} above upper circuit {tick.upper_circuit}."
+                )
 
             if required_cash > self.settled_cash:
                 raise SettlementViolationError(
@@ -295,6 +302,7 @@ class AsyncPortfolioState:
                 )
 
             # All checks passed: commit the fill
+            self._require_audit_capacity()
             self.settled_cash -= required_cash
             lag = 3 if tick.category == ShareCategory.Z else 2
             self.unsettled_share_lots.append(
@@ -355,14 +363,29 @@ class AsyncPortfolioState:
                     f"but only {available} matured shares exist."
                 )
 
+            # Depth penalty mirrors the buy side: a sweep past L1 bid volume fills 25 bps worse,
+            # rounded down to the tick (conservative for proceeds)
+            sell_px = tick.bid
+            if qty > tick.bid_volume:
+                sell_px = (tick.bid * Decimal("0.9975") / DSE_TICK_SIZE).to_integral_value(
+                    rounding=ROUND_FLOOR
+                ) * DSE_TICK_SIZE
+
+            if sell_px < tick.lower_circuit:  # a penalised fill below the circuit cannot print
+                raise CircuitBreakerLiquidityError(
+                    f"{tick.symbol} penalised fill {sell_px} below lower circuit {tick.lower_circuit}."
+                )
+
             # Compute every amount before mutating anything
-            gross = tick.bid * Decimal(qty)
+            gross = sell_px * Decimal(qty)
+            # Commission rounds up: it reduces proceeds, so rounding up is conservative
             commission = (gross * self.commission_rate).quantize(
-                Decimal("0.01"), rounding=ROUND_HALF_UP
+                Decimal("0.01"), rounding=ROUND_CEILING
             )
             net_proceeds = gross - commission
 
             # All checks passed: commit the fill
+            self._require_audit_capacity()
             self.matured_positions[tick.symbol] = available - qty
             lag = 3 if tick.category == ShareCategory.Z else 2
             self.unsettled_cash.append(
@@ -379,7 +402,7 @@ class AsyncPortfolioState:
                     symbol=tick.symbol,
                     side=OrderSide.SELL.value,
                     qty=qty,
-                    exec_price=str(tick.bid),
+                    exec_price=str(sell_px),
                     commission_bdt=str(commission),
                     settled_cash_after_bdt=str(self.settled_cash),
                     reason=f"T+{lag}_RECEIVABLE_QUEUED",
@@ -1040,6 +1063,199 @@ async def test_harness_run_logs_t2_rejection_and_closes_log(tmp_path):
     text = log.read_text(encoding="utf-8")
     assert "Short-Sale Ban" in text       # the staged intraday sell is rejected and logged
     assert final.reserved_cash == Decimal("0.00")
+
+
+@pytest.mark.asyncio
+async def test_harness_retries_staged_order_until_latency_elapses(tmp_path, monkeypatch):
+    """Audit F7: ticks 5 ms apart must hold a staged buy until the 15 ms window has passed."""
+    import dse_paper_harness
+    import json
+
+    async def fast_stream(num_ticks: int = 0):
+        for i in range(5):
+            yield MarketTick(symbol="BXPHARMA", category=ShareCategory.A,
+                             exchange_ts_ms=1_000 + 5 * i, bid=Decimal("149.90"),
+                             ask=Decimal("150.00"), ask_volume=500, bid_volume=500)
+            await asyncio.sleep(0)
+
+    monkeypatch.setattr(dse_paper_harness, "simulated_dse_stream", fast_stream)
+    log = tmp_path / "audit.jsonl"
+    await dse_paper_harness.run_paper_session(log_path=log)
+    events = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    # The first buy (signal 1000) must fill on the first tick at or after 1015, not be dropped or
+    # executed early. Its fill is the only ORDER_FILLED at exchange_ts_ms 1015.
+    assert any(e["event_type"] == "ORDER_FILLED" and e["exchange_ts_ms"] == 1_015 for e in events)
+    assert not any("Look-ahead" in e["reason"] for e in events)
+
+
+@pytest.mark.asyncio
+async def test_sell_sweeping_past_bid_volume_fills_25bps_worse_on_tick():
+    state = AsyncPortfolioState(initial_cash=Decimal("0.01"))
+    state.matured_positions["GP"] = 1_000
+    tick = MarketTick(symbol="GP", category=ShareCategory.A, exchange_ts_ms=5_000,
+                      bid=Decimal("100.00"), ask=Decimal("100.10"), bid_volume=500)
+    # 1000 > 500 L1 -> 100.00 * 0.9975 = 99.75, floored to the 0.10 tick = 99.70
+    # gross 99,700.00, commission ceiling 0.3% = 299.10, net 99,400.90
+    net = await state.sell_matured_shares(tick, qty=1_000, signal_generated_ts_ms=1_000)
+    assert net == Decimal("99400.90")
+
+
+@pytest.mark.asyncio
+async def test_audit_queue_full_fails_closed_without_moving_cash():
+    """Audit F10: no fill may commit if its audit row cannot be queued."""
+    queue: asyncio.Queue = asyncio.Queue(maxsize=1)
+    queue.put_nowait(None)  # fill the queue
+    state = AsyncPortfolioState(initial_cash=Decimal("100000.00"), audit_queue=queue)
+    tick = MarketTick(symbol="GP", category=ShareCategory.A, exchange_ts_ms=5_000,
+                      bid=Decimal("99.90"), ask=Decimal("100.00"))
+    with pytest.raises(RuntimeError, match="audit queue full"):
+        await state.ingest_tick_and_buy(tick, qty=10, signal_generated_ts_ms=1_000)
+    assert state.settled_cash == Decimal("100000.00")
+    assert state.unsettled_share_lots == []
+
+
+@pytest.mark.asyncio
+async def test_penalised_sell_below_lower_circuit_is_rejected():
+    """Audit M2: 135.10 x 0.9975 floors to 134.70, below the 135.00 circuit. Must not print."""
+    state = AsyncPortfolioState(initial_cash=Decimal("0.01"))
+    state.matured_positions["SQURPHARMA"] = 1_000
+    tick = MarketTick(symbol="SQURPHARMA", category=ShareCategory.A, exchange_ts_ms=5_000,
+                      bid=Decimal("135.10"), ask=Decimal("135.20"), bid_volume=500,
+                      lower_circuit=Decimal("135.00"))
+    with pytest.raises(CircuitBreakerLiquidityError, match="below lower circuit"):
+        await state.sell_matured_shares(tick, qty=1_000, signal_generated_ts_ms=1_000)
+    assert state.matured_positions["SQURPHARMA"] == 1_000  # nothing moved
+
+
+@pytest.mark.asyncio
+async def test_penalised_buy_above_upper_circuit_is_rejected():
+    """Audit M2: ask 100.00 plus the 25 bps sweep penalty rounds to 100.30, above a 100.20 circuit."""
+    state = AsyncPortfolioState(initial_cash=Decimal("500000.00"))
+    tick = MarketTick(symbol="GP", category=ShareCategory.A, exchange_ts_ms=5_000,
+                      bid=Decimal("99.90"), ask=Decimal("100.00"), ask_volume=50,
+                      upper_circuit=Decimal("100.20"))
+    with pytest.raises(CircuitBreakerLiquidityError, match="above upper circuit"):
+        await state.ingest_tick_and_buy(tick, qty=100, signal_generated_ts_ms=1_000)
+    assert state.settled_cash == Decimal("500000.00")
+    assert state.unsettled_share_lots == []
+
+
+@pytest.mark.asyncio
+async def test_sell_commission_rounds_up_on_fractional_cent():
+    """L3: 7 x 150.10 = 1050.70; 0.3% = 3.1521 -> 3.16 on the sell side (half-up gives 3.15)."""
+    state = AsyncPortfolioState(initial_cash=Decimal("0.01"))
+    state.matured_positions["GP"] = 7
+    tick = MarketTick(symbol="GP", category=ShareCategory.A, exchange_ts_ms=5_000,
+                      bid=Decimal("150.10"), ask=Decimal("150.20"), bid_volume=1_000)
+    net = await state.sell_matured_shares(tick, qty=7, signal_generated_ts_ms=1_000)
+    assert net == Decimal("1047.54")
+
+
+@pytest.mark.asyncio
+async def test_logger_stop_does_not_hang_when_drain_worker_died(tmp_path):
+    """Audit L1: stop() must surface a dead drain worker, not block on a put with no consumer."""
+    from dse_paper_harness import AsyncAuditLogger
+
+    logger = AsyncAuditLogger(log_path=tmp_path / "a.jsonl")
+
+    async def dead() -> None:
+        raise OSError("disk gone")
+
+    logger._worker = asyncio.create_task(dead())
+    await asyncio.sleep(0)
+    with pytest.raises(OSError, match="disk gone"):
+        await asyncio.wait_for(logger.stop(), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_stop_surfaces_worker_death_while_queue_is_full(tmp_path):
+    """Audit M1: a worker that dies while the queue is full must not hang stop()."""
+    from dse_paper_harness import AsyncAuditLogger
+
+    logger = AsyncAuditLogger(log_path=tmp_path / "a.jsonl")
+    logger.queue = asyncio.Queue(maxsize=1)
+    logger.queue.put_nowait(None)  # full, and nothing is consuming it
+
+    async def dies_later() -> None:
+        await asyncio.sleep(0.05)
+        raise OSError("disk gone")
+
+    logger._worker = asyncio.create_task(dies_later())
+    with pytest.raises(OSError, match="disk gone"):
+        await asyncio.wait_for(logger.stop(), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_put_surfaces_worker_death_instead_of_blocking(tmp_path):
+    """Audit M2: a risk-rejection row on a full queue with a dead worker must raise, not hang."""
+    from dse_paper_harness import AsyncAuditLogger
+
+    logger = AsyncAuditLogger(log_path=tmp_path / "a.jsonl")
+    logger.queue = asyncio.Queue(maxsize=1)
+    logger.queue.put_nowait(None)
+
+    async def dies_later() -> None:
+        await asyncio.sleep(0.05)
+        raise OSError("disk gone")
+
+    logger._worker = asyncio.create_task(dies_later())
+    with pytest.raises(OSError, match="disk gone"):
+        await asyncio.wait_for(logger.put(None), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_put_leaves_no_ghost_task(tmp_path):
+    """Audit M1: cancelling a put() on a full queue must not leave an orphan put task."""
+    from dse_paper_harness import AsyncAuditLogger
+
+    logger = AsyncAuditLogger(log_path=tmp_path / "a.jsonl")
+    logger.queue = asyncio.Queue(maxsize=1)
+    logger.queue.put_nowait(None)  # full
+    logger._worker = asyncio.create_task(asyncio.sleep(10))  # alive, but not consuming
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(logger.put(None), timeout=0.05)
+    await asyncio.sleep(0)
+    orphans = [t for t in asyncio.all_tasks()
+               if t is not asyncio.current_task() and t is not logger._worker and not t.done()]
+    assert orphans == []
+    logger._worker.cancel()
+
+
+@pytest.mark.asyncio
+async def test_check_alive_raises_once_worker_has_ended(tmp_path):
+    """Audit M2: the per-tick liveness check must surface a dead writer."""
+    from dse_paper_harness import AsyncAuditLogger
+
+    logger = AsyncAuditLogger(log_path=tmp_path / "a.jsonl")
+
+    async def dead() -> None:
+        raise OSError("disk gone")
+
+    logger._worker = asyncio.create_task(dead())
+    await asyncio.sleep(0)
+    with pytest.raises(OSError, match="disk gone"):
+        logger.check_alive()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_worker_is_reported_as_runtime_error_not_cancellation(tmp_path):
+    """Audit L1: a cancelled drain worker must not raise CancelledError into an uncancelled caller."""
+    from dse_paper_harness import AsyncAuditLogger
+
+    logger = AsyncAuditLogger(log_path=tmp_path / "a.jsonl")
+    logger._worker = asyncio.create_task(asyncio.sleep(10))
+    await asyncio.sleep(0)
+    logger._worker.cancel()
+    await asyncio.sleep(0)
+    with pytest.raises(RuntimeError, match="cancelled"):
+        await asyncio.wait_for(logger.stop(), timeout=1)
+
+
+def test_commission_rounds_up_not_to_nearest():
+    state = AsyncPortfolioState(initial_cash=Decimal("100000.00"))
+    # 7 x 150.10 = 1050.70; 0.3% = 3.1521 -> ceiling 3.16 (half-up would give 3.15)
+    _, commission, _ = state.calculate_buy_cost(Decimal("150.10"), 7)
+    assert commission == Decimal("3.16")
 '''
 
 # ===========================================================================
@@ -1093,10 +1309,48 @@ class AsyncAuditLogger:
     def start(self) -> None:
         self._worker = asyncio.create_task(self._drain_loop())
 
+    async def put(self, item: Optional[AuditEvent]) -> None:
+        """Enqueue without blocking on a dead drain worker (audit M1, M2)."""
+        if self._worker is None:
+            raise RuntimeError("audit logger not started")
+        if self._worker.done():
+            self._raise_worker_end()
+        put_task = asyncio.ensure_future(self.queue.put(item))
+        try:
+            done, _ = await asyncio.wait(
+                {put_task, self._worker}, return_when=asyncio.FIRST_COMPLETED
+            )
+        finally:
+            if not put_task.done():  # caller cancelled, or the worker ended: never leave a ghost put
+                put_task.cancel()
+        if put_task in done:
+            put_task.result()  # surface a failed put rather than reporting success (audit L1)
+            return
+        self._raise_worker_end()
+
+    def check_alive(self) -> None:
+        """Raise if the drain worker has ended, so fills do not pile up unseen (audit M2)."""
+        if self._worker is not None and self._worker.done():
+            self._raise_worker_end()
+
+    def _raise_worker_end(self) -> None:
+        assert self._worker is not None and self._worker.done()
+        if self._worker.cancelled():
+            raise RuntimeError("audit drain worker was cancelled")
+        if self._worker.exception() is not None:
+            raise self._worker.exception()
+        raise RuntimeError("audit drain worker stopped before the session ended")
+
     async def stop(self) -> None:
-        if self._worker is not None:
-            await self.queue.put(None)
-            await self._worker
+        if self._worker is None:
+            return
+        if not self._worker.done():
+            await self.put(None)
+            await asyncio.wait({self._worker})
+        if self._worker.cancelled():  # surface, rather than raising CancelledError into the caller
+            raise RuntimeError("audit drain worker was cancelled")
+        if self._worker.exception() is not None:
+            raise self._worker.exception()
 
     async def _drain_loop(self) -> None:
         with self.log_path.open("a", encoding="utf-8") as fp:
@@ -1137,9 +1391,7 @@ async def simulated_dse_stream(num_ticks: int = 12) -> AsyncIterator[MarketTick]
 
 
 async def run_paper_session(log_path: Path = Path("dse_paper_audit.jsonl")) -> AsyncPortfolioState:
-    if log_path.exists():
-        log_path.unlink()
-
+    # The log is append-only: a rerun adds rows rather than erasing the previous session's audit trail
     logger = AsyncAuditLogger(log_path=log_path)
     logger.start()
 
@@ -1165,6 +1417,7 @@ async def _run_ticks(
 ) -> None:
     seq = 0
     async for tick in simulated_dse_stream(num_ticks=12):
+        logger.check_alive()  # a dead writer must stop the session, not let fills pile up unlogged
         # 1. Execute previously staged orders once the latency window has elapsed
         pending = staged.get(tick.symbol, [])
         still_waiting: List[StagedOrder] = []
@@ -1183,7 +1436,7 @@ async def _run_ticks(
                     )
             except RiskViolationError as exc:
                 # await put (not put_nowait) so a full queue back-pressures instead of dropping rows
-                await logger.queue.put(
+                await logger.put(
                     AuditEvent(
                         event_type="RISK_REJECTED",
                         exchange_ts_ms=tick.exchange_ts_ms,

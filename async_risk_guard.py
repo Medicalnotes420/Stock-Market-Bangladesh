@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import functools
 from dataclasses import dataclass
-from decimal import Decimal, ROUND_CEILING, ROUND_HALF_UP
+from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from enum import Enum
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
@@ -195,8 +195,9 @@ class AsyncPortfolioState:
         slipped = ask_price * (Decimal("1") + slippage_bps / Decimal("10000"))
         exec_price = self.round_to_dse_tick(slipped)
         gross = exec_price * Decimal(qty)
+        # Commission rounds up: a cost to us is never under-reserved
         commission = (gross * self.commission_rate).quantize(
-            Decimal("0.01"), rounding=ROUND_HALF_UP
+            Decimal("0.01"), rounding=ROUND_CEILING
         )
         return exec_price, commission, gross + commission
 
@@ -211,12 +212,14 @@ class AsyncPortfolioState:
             inventory += prices.get(lot.symbol, Decimal("0.00")) * Decimal(lot.qty)
         return self.settled_cash + self.reserved_cash + receivables + inventory
 
+    def _require_audit_capacity(self) -> None:
+        """Fail closed: refuse to fill when the audit queue cannot take the row (audit F10)."""
+        if self.audit_queue is not None and self.audit_queue.full():
+            raise RuntimeError("audit queue full: refusing to fill without an audit row")
+
     def _emit_audit_unlocked(self, event: AuditEvent) -> None:
         if self.audit_queue is not None:
-            try:
-                self.audit_queue.put_nowait(event)
-            except asyncio.QueueFull:
-                pass  # known gap: dropped audit row (see audit F10)
+            self.audit_queue.put_nowait(event)  # capacity guaranteed by _require_audit_capacity
 
     async def ingest_tick_and_buy(
         self,
@@ -262,6 +265,10 @@ class AsyncPortfolioState:
             exec_price, commission, required_cash = self.calculate_buy_cost(
                 tick.ask, qty, slippage_bps=slippage_bps
             )
+            if exec_price > tick.upper_circuit:  # a penalised fill above the circuit cannot print
+                raise CircuitBreakerLiquidityError(
+                    f"{tick.symbol} penalised fill {exec_price} above upper circuit {tick.upper_circuit}."
+                )
 
             if required_cash > self.settled_cash:
                 raise SettlementViolationError(
@@ -280,6 +287,7 @@ class AsyncPortfolioState:
                 )
 
             # All checks passed: commit the fill
+            self._require_audit_capacity()
             self.settled_cash -= required_cash
             lag = 3 if tick.category == ShareCategory.Z else 2
             self.unsettled_share_lots.append(
@@ -340,14 +348,29 @@ class AsyncPortfolioState:
                     f"but only {available} matured shares exist."
                 )
 
+            # Depth penalty mirrors the buy side: a sweep past L1 bid volume fills 25 bps worse,
+            # rounded down to the tick (conservative for proceeds)
+            sell_px = tick.bid
+            if qty > tick.bid_volume:
+                sell_px = (tick.bid * Decimal("0.9975") / DSE_TICK_SIZE).to_integral_value(
+                    rounding=ROUND_FLOOR
+                ) * DSE_TICK_SIZE
+
+            if sell_px < tick.lower_circuit:  # a penalised fill below the circuit cannot print
+                raise CircuitBreakerLiquidityError(
+                    f"{tick.symbol} penalised fill {sell_px} below lower circuit {tick.lower_circuit}."
+                )
+
             # Compute every amount before mutating anything
-            gross = tick.bid * Decimal(qty)
+            gross = sell_px * Decimal(qty)
+            # Commission rounds up: it reduces proceeds, so rounding up is conservative
             commission = (gross * self.commission_rate).quantize(
-                Decimal("0.01"), rounding=ROUND_HALF_UP
+                Decimal("0.01"), rounding=ROUND_CEILING
             )
             net_proceeds = gross - commission
 
             # All checks passed: commit the fill
+            self._require_audit_capacity()
             self.matured_positions[tick.symbol] = available - qty
             lag = 3 if tick.category == ShareCategory.Z else 2
             self.unsettled_cash.append(
@@ -364,7 +387,7 @@ class AsyncPortfolioState:
                     symbol=tick.symbol,
                     side=OrderSide.SELL.value,
                     qty=qty,
-                    exec_price=str(tick.bid),
+                    exec_price=str(sell_px),
                     commission_bdt=str(commission),
                     settled_cash_after_bdt=str(self.settled_cash),
                     reason=f"T+{lag}_RECEIVABLE_QUEUED",

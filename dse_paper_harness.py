@@ -46,10 +46,48 @@ class AsyncAuditLogger:
     def start(self) -> None:
         self._worker = asyncio.create_task(self._drain_loop())
 
+    async def put(self, item: Optional[AuditEvent]) -> None:
+        """Enqueue without blocking on a dead drain worker (audit M1, M2)."""
+        if self._worker is None:
+            raise RuntimeError("audit logger not started")
+        if self._worker.done():
+            self._raise_worker_end()
+        put_task = asyncio.ensure_future(self.queue.put(item))
+        try:
+            done, _ = await asyncio.wait(
+                {put_task, self._worker}, return_when=asyncio.FIRST_COMPLETED
+            )
+        finally:
+            if not put_task.done():  # caller cancelled, or the worker ended: never leave a ghost put
+                put_task.cancel()
+        if put_task in done:
+            put_task.result()  # surface a failed put rather than reporting success (audit L1)
+            return
+        self._raise_worker_end()
+
+    def check_alive(self) -> None:
+        """Raise if the drain worker has ended, so fills do not pile up unseen (audit M2)."""
+        if self._worker is not None and self._worker.done():
+            self._raise_worker_end()
+
+    def _raise_worker_end(self) -> None:
+        assert self._worker is not None and self._worker.done()
+        if self._worker.cancelled():
+            raise RuntimeError("audit drain worker was cancelled")
+        if self._worker.exception() is not None:
+            raise self._worker.exception()
+        raise RuntimeError("audit drain worker stopped before the session ended")
+
     async def stop(self) -> None:
-        if self._worker is not None:
-            await self.queue.put(None)
-            await self._worker
+        if self._worker is None:
+            return
+        if not self._worker.done():
+            await self.put(None)
+            await asyncio.wait({self._worker})
+        if self._worker.cancelled():  # surface, rather than raising CancelledError into the caller
+            raise RuntimeError("audit drain worker was cancelled")
+        if self._worker.exception() is not None:
+            raise self._worker.exception()
 
     async def _drain_loop(self) -> None:
         with self.log_path.open("a", encoding="utf-8") as fp:
@@ -90,9 +128,7 @@ async def simulated_dse_stream(num_ticks: int = 12) -> AsyncIterator[MarketTick]
 
 
 async def run_paper_session(log_path: Path = Path("dse_paper_audit.jsonl")) -> AsyncPortfolioState:
-    if log_path.exists():
-        log_path.unlink()
-
+    # The log is append-only: a rerun adds rows rather than erasing the previous session's audit trail
     logger = AsyncAuditLogger(log_path=log_path)
     logger.start()
 
@@ -118,6 +154,7 @@ async def _run_ticks(
 ) -> None:
     seq = 0
     async for tick in simulated_dse_stream(num_ticks=12):
+        logger.check_alive()  # a dead writer must stop the session, not let fills pile up unlogged
         # 1. Execute previously staged orders once the latency window has elapsed
         pending = staged.get(tick.symbol, [])
         still_waiting: List[StagedOrder] = []
@@ -136,7 +173,7 @@ async def _run_ticks(
                     )
             except RiskViolationError as exc:
                 # await put (not put_nowait) so a full queue back-pressures instead of dropping rows
-                await logger.queue.put(
+                await logger.put(
                     AuditEvent(
                         event_type="RISK_REJECTED",
                         exchange_ts_ms=tick.exchange_ts_ms,
