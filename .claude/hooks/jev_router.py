@@ -9,6 +9,7 @@ d = json.load(sys.stdin)
 ev, tool, inp = d["hook_event_name"], d.get("tool_name", ""), d.get("tool_input", {})
 ROOT = pathlib.Path("E:/AI Apps/Stockapp")
 ALLOWED = [ROOT, pathlib.Path("C:/Users/WALTON/.claude/projects"), pathlib.Path("C:/Users/WALTON/AppData/Local/Temp/claude")]
+QUANT = {"async_risk_guard.py", "dse_paper_harness.py", "test_async_risk_guard.py", "test_quant_verifier_dse.py"}
 state = ROOT / ".claude/state/jev_errors.json"
 try:
     errs = json.loads(state.read_text())
@@ -26,6 +27,11 @@ if ev in ("PostToolUse", "PostToolUseFailure"):  # failure counts up, a success 
     errs[k] = errs.get(k, 0) + 1 if ev == "PostToolUseFailure" else 0
     state.parent.mkdir(parents=True, exist_ok=True)
     state.write_text(json.dumps(errs))
+    name = pathlib.Path(inp.get("file_path", "")).name
+    if ev == "PostToolUse" and tool in ("Write", "Edit") and name in QUANT:
+        # exit 2 so the reminder reaches the model; the edit has already happened
+        block(f"edited core quant file {name}. Before marking the task done, run the quant-verifier "
+              "subagent and `pytest test_async_risk_guard.py test_quant_verifier_dse.py --asyncio-mode=strict`.")
     sys.exit(0)
 
 if errs.get(k, 0) >= 2:  # retry gate
