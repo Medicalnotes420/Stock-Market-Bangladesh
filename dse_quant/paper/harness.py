@@ -19,6 +19,7 @@ from dse_quant.data.checks import data_status
 from dse_quant.panels import build_panels, eligible_mask
 from dse_quant.regime import classify, inputs as regime_inputs
 from dse_quant.risk import Portfolio, RiskGate, exit_list
+from dse_quant.sessions import closed_reason, expected_session
 
 START_CASH = Decimal(10_000_000)  # Tk 1 crore paper account: assumption until you give capital size
 HISTORY = 500     # sessions kept; >= 250 listing history + regime windows, and keeps a run under a minute
@@ -135,7 +136,9 @@ def daily_run(prices, market, types, asof, state_path, journal_path, orders_dir,
         # fill and decide. Old state files have no bar_asof: defaulting to asof means a processed day is never
         # filled twice; the cost is one missed fill if the old file's last run was stale.
         new_bar = bar_today and state.get("bar_asof", last) != str(asof.date())
-        weekend = asof.dayofweek in (4, 5) and not bar_today
+        closed = None if bar_today else closed_reason(asof)  # a bar on the day wins over the calendar
+        # stale = the last real session's bar never arrived; a closed day does not hide that
+        behind = status is None or status["latest_bar"] < expected_session(asof)
         if strategy:
             for k, v in book.new_book(state["cash"]).items():
                 state.setdefault(k, v)
@@ -162,9 +165,9 @@ def daily_run(prices, market, types, asof, state_path, journal_path, orders_dir,
         else:
             gate = RiskGate(pf, **status)
             entry.update(gate_open=gate.allow_new_entries, gate_reasons=gate.reasons, kill=gate.kill)
-            if weekend:  # DSE trades Sunday-Thursday: a Friday/Saturday without prices is not stale data
+            if closed:  # a weekend day or listed holiday has no bar of its own: only a late earlier bar is stale
                 entry.update(gate_open=False, gate_reasons=[r for r in gate.reasons if r not in
-                             ("stale_data", "missing_data", "missing_index")] + ["dse_weekend"])
+                             ("stale_data", "missing_data", "missing_index")] + ["stale_data"] * behind + [closed])
             if gate.kill:
                 entry["exit_list"] = exit_list(pf, adtv)
         if entry["regime"] == "STRESS" and pos:
@@ -173,8 +176,7 @@ def daily_run(prices, market, types, asof, state_path, journal_path, orders_dir,
         if strategy and (new_day or new_bar):
             if state.get("equity") and new_bar:
                 state["returns"].append(float(equity / state["equity"] - 1))
-            stale = not weekend and (status is None or status["latest_bar"] != status["expected"])
-            book.stop_checks(state, stale=stale, kill=entry["kill"])
+            book.stop_checks(state, stale=behind, kill=entry["kill"])
             if new_bar:
                 name, params = STRATEGIES[strategy]
                 strat = make(name, params)

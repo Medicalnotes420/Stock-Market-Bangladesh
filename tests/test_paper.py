@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from decimal import Decimal
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import pandas as pd
@@ -60,14 +61,32 @@ class Harness(unittest.TestCase):
         self.assertTrue(e["regime"].endswith("(no breadth data)"))
 
     def test_dse_weekend_without_bar_is_not_stale(self):
-        sat = self.last + pd.offsets.Week(weekday=5)               # next Saturday: DSE closed, no bar
+        sat = self.last - pd.offsets.Week(weekday=5)  # a Saturday inside the data: no bar, the days before it loaded
         e = daily_run(self.df, self.m, TYPES, sat, **self.paths)
         self.assertFalse(e["gate_open"])
         self.assertIn("dse_weekend", e["gate_reasons"])
         self.assertNotIn("stale_data", e["gate_reasons"])
 
+    def test_closed_day_does_not_hide_a_late_bar(self):
+        sat = self.last + pd.offsets.Week(2, weekday=5)  # a Saturday over a week after the data ends
+        e = daily_run(self.df, self.m, TYPES, sat, **self.paths)
+        self.assertFalse(e["gate_open"])
+        self.assertIn("dse_weekend", e["gate_reasons"])
+        self.assertIn("stale_data", e["gate_reasons"])
+
+    def test_listed_holiday_without_bar_is_not_stale(self):
+        day = self.last + pd.Timedelta(days=7)  # the weekday the stale test below uses, here listed as a holiday
+        with mock.patch("dse_quant.paper.harness.closed_reason", return_value="market_closed"), \
+                mock.patch("dse_quant.paper.harness.expected_session", return_value=self.last.date()):
+            e = daily_run(self.df, self.m, TYPES, day, **self.paths)
+        self.assertFalse(e["gate_open"])
+        self.assertIn("market_closed", e["gate_reasons"])
+        self.assertNotIn("stale_data", e["gate_reasons"])
+
     def test_stale_data_blocks_and_alerts(self):
-        e = daily_run(self.df, self.m, TYPES, self.last + pd.Timedelta(days=7), **self.paths)  # a Tuesday: a DSE session with no data
+        # a Tuesday with no data; pinned as a session because the synthetic dates can land on a real listed holiday
+        with mock.patch("dse_quant.paper.harness.closed_reason", return_value=None):
+            e = daily_run(self.df, self.m, TYPES, self.last + pd.Timedelta(days=7), **self.paths)
         self.assertFalse(e["gate_open"])
         self.assertIn("stale_data", e["gate_reasons"])
         self.assertEqual(e["orders"], [])
