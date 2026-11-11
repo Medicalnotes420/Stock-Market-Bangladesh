@@ -6,19 +6,21 @@ journaled as an alert and closes the gate; it never skips the journal."""
 import csv
 import json
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 
 import pandas as pd
 
 from dse_quant import indicators as ind
 from dse_quant.paper import book
+from dse_quant.paper.book import _money
 from dse_quant.strategies import make
 from dse_quant.data.checks import data_status
 from dse_quant.panels import build_panels, eligible_mask
 from dse_quant.regime import classify, inputs as regime_inputs
 from dse_quant.risk import Portfolio, RiskGate, exit_list
 
-START_CASH = 1e7  # Tk 1 crore paper account: assumption until you give capital size
+START_CASH = Decimal(10_000_000)  # Tk 1 crore paper account: assumption until you give capital size
 HISTORY = 500     # sessions kept; >= 250 listing history + regime windows, and keeps a run under a minute
 # paper-trackable rules: S67 was WEAK in docs/SECRETS_RESULTS.md, then rejected on fresh 2026 data
 # (docs/SECRETS_FORECAST_RESULTS.md); off by default since 2026-11-05. Parameters are those chosen for held-out
@@ -28,7 +30,14 @@ STRATEGIES = {"S67": ("S67", {"filter96": True, "exit_rule": "cross"})}
 def load_state(path):
     path = Path(path)
     if path.exists():
-        return json.loads(path.read_text())
+        s = json.loads(path.read_text())  # old files hold floats, new ones strings: both become Decimal
+        for k in ("cash", "peak_equity", "day_start_equity", "equity"):
+            if k in s:
+                s[k] = _money(s[k])
+        for lot in s.get("lots", {}).values():
+            lot["basis"] = _money(lot["basis"])
+        s["unsettled_cash"] = [[d, _money(a), lag] for d, a, lag in s.get("unsettled_cash", [])]
+        return s
     return {"cash": START_CASH, "peak_equity": START_CASH, "day_start_equity": START_CASH, "positions": {}}
 
 
@@ -83,7 +92,7 @@ def watch_row(p, elig, t):
             "gap_20d": bool(p.gap_flag[t].iloc[-20:].any()), **author_flags(p, t)}
 
 
-def daily_run(prices, market, types, asof, state_path, journal_path, orders_dir, strategy=None, watch=()):
+def daily_run(prices, market, types, asof, state_path, journal_path, orders_dir, strategy=None, watch=(), categories=None):
     asof = pd.Timestamp(asof)
     entry = {"run_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "asof": str(asof.date()),
              "strategy": strategy or "none", "alerts": [], "orders": [], "exit_list": [], "regime": "UNKNOWN",
@@ -122,19 +131,30 @@ def daily_run(prices, market, types, asof, state_path, journal_path, orders_dir,
             raise ValueError(f"asof {asof.date()} is before the last run {last}; use a fresh state file to replay")
         new_day = last != str(asof.date())
         bar_today = status is not None and p.dates[-1] == asof
+        # a stale run (bar not loaded yet) marks the day seen but not its bar: the rerun with the bar must still
+        # fill and decide. Old state files have no bar_asof: defaulting to asof means a processed day is never
+        # filled twice; the cost is one missed fill if the old file's last run was stale.
+        new_bar = bar_today and state.get("bar_asof", last) != str(asof.date())
         weekend = asof.dayofweek in (4, 5) and not bar_today
         if strategy:
             for k, v in book.new_book(state["cash"]).items():
                 state.setdefault(k, v)
-            if new_day and bar_today:  # fill yesterday's orders once per session; a rerun keeps them
-                entry["fills"] = book.fill_pending(state, p, len(p.dates) - 1)
+            for t, q in state["positions"].items():  # hand-entered (no-strategy) positions have no lot: matured, valued today
+                state["lots"].setdefault(t, {"entry_date": "1900-01-01", "lag": 2,
+                                             "basis": q * Decimal(str(last_close.get(t, 0.0)))})
+            if new_bar:  # fill yesterday's orders once per session; a rerun keeps them
+                entry["fills"] = book.fill_pending(state, p, len(p.dates) - 1, categories=categories)
         # baseline = equity at the previous day's close; a rerun of the same day keeps that day's baseline
         day_start = state["day_start_equity"] if last == str(asof.date()) else state.get("equity", state["day_start_equity"])
         pos = {t: q for t, q in state["positions"].items() if q > 0}
-        prices_now = {t: last_close.get(t, 0.0) for t in pos}
-        equity = state["cash"] + sum(q * prices_now[t] for t, q in pos.items())
+        prices_now = {t: Decimal(str(last_close.get(t, 0.0))) for t in pos}
+        receivable = sum((a for _, a, _ in state.get("unsettled_cash", [])), Decimal(0))
+        equity = state["cash"] + receivable + sum(q * prices_now[t] for t, q in pos.items())
+        # no-strategy mode has no lots, so positions count as matured; without data no lot can be proven matured
+        unsettled = (book.unsettled_shares(state, p, len(p.dates) - 1) if status is not None
+                     else {t: q for t, q in pos.items() if t in state.get("lots", {})})
         pf = Portfolio(equity=equity, peak_equity=max(state["peak_equity"], equity),
-                       day_start_equity=day_start, positions=pos, prices=prices_now)
+                       day_start_equity=day_start, positions=pos, prices=prices_now, unsettled=unsettled)
         if status is None:
             entry.update(gate_open=False, gate_reasons=["input_error"], kill=False)
         else:
@@ -148,20 +168,21 @@ def daily_run(prices, market, types, asof, state_path, journal_path, orders_dir,
         if entry["regime"] == "STRESS" and pos:
             entry["exit_list"] = entry["exit_list"] or exit_list(pf, adtv)
         entry["equity"] = equity
-        if strategy and new_day:
-            if state.get("equity") and bar_today:
-                state["returns"].append(equity / state["equity"] - 1)
+        if strategy and (new_day or new_bar):
+            if state.get("equity") and new_bar:
+                state["returns"].append(float(equity / state["equity"] - 1))
             stale = not weekend and (status is None or status["latest_bar"] != status["expected"])
             book.stop_checks(state, stale=stale, kill=entry["kill"])
-            if bar_today:
+            if new_bar:
                 name, params = STRATEGIES[strategy]
                 strat = make(name, params)
                 strat.prepare(p, elig)
                 book.decide(state, strat, p, len(p.dates) - 1, regime=entry["regime"], gate_open=entry["gate_open"])
         if strategy:
             reason = f"stopped: {state['stopped']}" if state["stopped"] else f"{strategy} exit"
-            entry["orders"] = ([{"ticker": t, "side": "SELL", "qty": state["positions"][t], "reason": reason}
-                                for t in state["pending_sells"]]
+            entry["orders"] = ([{"ticker": t, "side": "SELL", "qty": state["positions"][t] - unsettled.get(t, 0),
+                                 "reason": reason}
+                                for t in state["pending_sells"] if state["positions"][t] > unsettled.get(t, 0)]
                                + [{"ticker": t, "side": "BUY", "qty": q, "reason": f"{strategy} entry"}
                                   for t, q in state["pending_buys"].items()])
             entry["book"] = {k: state[k] for k in ("cash", "positions", "stopped")}
@@ -189,5 +210,7 @@ def daily_run(prices, market, types, asof, state_path, journal_path, orders_dir,
     # never overwrite a state file we could not use, or save equity valued without prices
     if state_ok and status is not None:
         state.update(asof=str(asof.date()), equity=equity, day_start_equity=day_start, peak_equity=pf.peak_equity)
-        Path(state_path).write_text(json.dumps(state))
+        if bar_today:
+            state["bar_asof"] = str(asof.date())
+        Path(state_path).write_text(json.dumps(state, default=str))  # Decimal -> string; default= keeps it from raising
     return entry

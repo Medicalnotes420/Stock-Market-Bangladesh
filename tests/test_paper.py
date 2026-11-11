@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from decimal import Decimal
 from pathlib import Path
 
 import numpy as np
@@ -86,6 +87,28 @@ class Harness(unittest.TestCase):
         self.assertEqual({r["ticker"] for r in e["exit_list"]}, {"T1", "T2"})
         self.assertFalse(e["gate_open"])
 
+    def test_kill_exit_list_has_matured_shares_only(self):
+        held = {"cash": "1000000", "peak_equity": "10000000", "day_start_equity": "1200000",
+                "positions": {"T1": 1000, "T2": 500},
+                "lots": {"T1": {"entry_date": str(self.last.date()), "basis": "30000.00", "lag": 3},
+                         "T2": {"entry_date": "2020-01-02", "basis": "15000.00", "lag": 2}}}
+        self.paths["state_path"].write_text(json.dumps(held))
+        e = daily_run(self.df, self.m, TYPES, self.last, **self.paths)
+        self.assertTrue(e["kill"])
+        self.assertEqual({r["ticker"]: r["qty"] for r in e["exit_list"]}, {"T2": 500})
+
+    def test_state_is_written_as_strings_and_reloads(self):
+        days = self.df.date.unique()[-3:]
+        for d in days:
+            daily_run(self.df, self.m, TYPES, d, strategy="S67", **self.paths)
+        raw = json.loads(self.paths["state_path"].read_text())
+        self.assertIsInstance(raw["cash"], str)
+        self.assertIsInstance(raw["equity"], str)
+        self.assertIsInstance(load_state(self.paths["state_path"])["cash"], Decimal)
+        e = daily_run(self.df, self.m, TYPES, days[-1], strategy="S67", **self.paths)   # same-day rerun on string state
+        self.assertEqual(e["alerts"], [])
+        self.assertEqual(summarize(self.paths["journal_path"])["runs"], 4)
+
     def check_bad_state(self, text):
         self.paths["state_path"].write_text(text)
         e = daily_run(self.df, self.m, TYPES, self.last, **self.paths)   # must not raise
@@ -134,6 +157,26 @@ class Harness(unittest.TestCase):
         for _ in range(2):  # -3% vs yesterday's close, on both runs
             e = daily_run(self.df, self.m, TYPES, self.last, **self.paths)
             self.assertIn("max_daily_loss", e["gate_reasons"])
+
+    def test_strategy_run_sells_a_hand_entered_position_without_a_lot(self):
+        prev = str(self.df.date.unique()[-2].date())
+        self.paths["state_path"].write_text(json.dumps(
+            {"asof": prev, "equity": 1e7, "day_start_equity": 1e7, "cash": 1e7 - 30_000, "peak_equity": 1e7,
+             "positions": {"T1": 1000}, "pending_sells": ["T1"]}))    # no "lots": made in no-strategy mode
+        e = daily_run(self.df, self.m, TYPES, self.last, strategy="S67", **self.paths)
+        self.assertEqual(e["alerts"], [])
+        self.assertIn(("SELL", "T1"), [(f["side"], f["ticker"]) for f in e["fills"]])
+
+    def test_rerun_with_the_bar_fills_after_a_stale_first_run(self):
+        prev = str(self.df.date.unique()[-2].date())
+        self.paths["state_path"].write_text(json.dumps(
+            {"asof": prev, "bar_asof": prev, "equity": 1e7, "day_start_equity": 1e7, "cash": 1e7,
+             "peak_equity": 1e7, "positions": {}, "pending_buys": {"T2": 100}}))
+        daily_run(self.df[self.df.date < self.last], self.m, TYPES, self.last, strategy="S67", **self.paths)
+        self.assertEqual(json.loads(self.paths["state_path"].read_text())["positions"], {})   # bar not loaded: no fill
+        e = daily_run(self.df, self.m, TYPES, self.last, strategy="S67", **self.paths)
+        self.assertEqual([(f["side"], f["ticker"]) for f in e["fills"]], [("BUY", "T2")])
+        self.assertEqual(json.loads(self.paths["state_path"].read_text())["bar_asof"], str(self.last.date()))
 
     def test_input_error_day_does_not_move_state(self):
         text = json.dumps({"asof": "2020-01-01", "equity": 1e7, "day_start_equity": 1e7, "cash": 1e6,

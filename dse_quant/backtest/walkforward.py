@@ -1,12 +1,12 @@
 """Walk-forward stitching: join each year's returns from the parameter set chosen for that year."""
 import pandas as pd
 
-from dse_quant.backtest.costs import BASE
+from async_risk_guard import DSE_COMMISSION_RATE
 
 
 def switch_cost(mult=1.0, floor=0.001):
     """Selling the whole book and buying a new one: two sides at the minimum per-side cost."""
-    return 2 * mult * (BASE + floor)
+    return 2 * mult * (float(DSE_COMMISSION_RATE) + floor)  # statistics, so float
 
 
 def stitch(year_returns, chosen, cost):

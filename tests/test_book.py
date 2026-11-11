@@ -1,4 +1,5 @@
 import unittest
+from decimal import Decimal
 
 import pandas as pd
 
@@ -29,10 +30,13 @@ def panel(closes):
     return p
 
 
-def run_days(p, strat, days, book=None, regime="RISK_ON"):
+A = {"S": "A"}  # T+2; without a category the book assumes Z (T+3)
+
+
+def run_days(p, strat, days, book=None, regime="RISK_ON", categories=A):
     book = book or new_book(1e6)
     for t in range(days):
-        fill_pending(book, p, t)
+        fill_pending(book, p, t, categories=categories)
         decide(book, strat, p, t, regime=regime, gate_open=True)
     return book
 
@@ -42,7 +46,7 @@ class Book(unittest.TestCase):
         p = panel([10.0] * 5)
         book = run_days(p, Stub(buy={0}), 2)
         self.assertEqual(book["positions"]["S"], 5000)          # 0.5% of 1e6 / ATR 1
-        rate = cost_rate(50_000, 1e10, 0.0)
+        rate = float(cost_rate(50_000, 1e10, 0.0))
         self.assertAlmostEqual(book["cash"], 1e6 - 5000 * 10 * (1 + rate))
 
     def test_exit_waits_for_t_plus_2(self):
@@ -51,6 +55,23 @@ class Book(unittest.TestCase):
         self.assertIn("S", book["positions"])
         book = run_days(p, Stub(buy={0}, sell={1}), 4)
         self.assertNotIn("S", book["positions"])
+
+    def test_cat_z_and_unknown_category_wait_for_t_plus_3(self):
+        p = panel([10.0] * 8)
+        for cats in ({"S": "Z"}, {}, {"S": "Q"}):
+            book = run_days(p, Stub(buy={0}, sell={1}), 4, categories=cats)       # t3 would fill under T+2
+            self.assertIn("S", book["positions"])
+            book = run_days(p, Stub(buy={0}, sell={1}), 5, categories=cats)
+            self.assertNotIn("S", book["positions"])
+
+    def test_sale_proceeds_clear_after_the_lag(self):
+        p = panel([10.0] * 10)
+        book = run_days(p, Stub(buy={0}, sell={1}), 4)                           # sold at t3
+        self.assertEqual(len(book["unsettled_cash"]), 1)
+        self.assertLess(book["cash"], Decimal(960_000))                          # proceeds not spendable yet
+        book = run_days(p, Stub(buy={0}, sell={1}), 6, categories=A)             # t5: proceeds cleared
+        self.assertEqual(book["unsettled_cash"], [])
+        self.assertGreater(book["cash"], Decimal(999_000))
 
     def test_no_sell_on_lower_lock_and_it_is_counted(self):
         p = panel([10.0, 10.0, 10.0, 10.0, 9.0, 9.0])           # t4 locked down

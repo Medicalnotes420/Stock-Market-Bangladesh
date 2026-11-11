@@ -5,18 +5,21 @@ Values come from docs/PHASE1_SPEC.md section 6. Change them here, in code review
 import math
 from dataclasses import dataclass, field
 from datetime import date
+from decimal import Decimal
+
+from async_risk_guard import SettlementViolationError
 
 
 @dataclass(frozen=True)
 class Limits:
-    max_position_pct: float = 0.10   # of portfolio equity
-    max_adtv_pct: float = 0.05       # of 20-day average daily traded value
-    max_sector_pct: float = 0.30
+    max_position_pct: Decimal = Decimal("0.10")   # of portfolio equity
+    max_adtv_pct: Decimal = Decimal("0.05")       # of 20-day average daily traded value
+    max_sector_pct: Decimal = Decimal("0.30")
     max_names: int = 12
-    max_daily_loss: float = 0.02     # blocks new entries next session
-    max_drawdown: float = 0.15       # kill switch
-    max_missing_frac: float = 0.05   # of universe missing today's bar
-    risk_per_atr: float = 0.005      # vol-target: equity fraction risked per 1 ATR
+    max_daily_loss: Decimal = Decimal("0.02")     # blocks new entries next session
+    max_drawdown: Decimal = Decimal("0.15")       # kill switch
+    max_missing_frac: float = 0.05   # of universe missing today's bar (a data statistic, not money)
+    risk_per_atr: Decimal = Decimal("0.005")      # vol-target: equity fraction risked per 1 ATR
 
 
 LIMITS = Limits()
@@ -26,39 +29,54 @@ LIMITS = Limits()
 class Order:
     ticker: str
     qty: int
-    price: float
+    price: Decimal
     side: str
 
     def __post_init__(self):
         if self.side not in ("BUY", "SELL"):
             raise ValueError(f"side must be BUY or SELL, got {self.side!r}")
-        if self.qty < 0 or not self.price > 0:
+        if not isinstance(self.price, Decimal):
+            raise TypeError(f"price must be Decimal, got {type(self.price).__name__}")
+        if self.qty < 0 or not (self.price.is_finite() and self.price > 0):
             raise ValueError("qty must be >= 0 and price > 0")
 
 
 @dataclass
 class Portfolio:
-    equity: float
-    peak_equity: float
-    day_start_equity: float
-    positions: dict = field(default_factory=dict)  # ticker -> shares
-    prices: dict = field(default_factory=dict)     # ticker -> last close
+    equity: Decimal
+    peak_equity: Decimal
+    day_start_equity: Decimal
+    positions: dict = field(default_factory=dict)  # ticker -> TOTAL shares held; the caps count unsettled exposure
+    prices: dict = field(default_factory=dict)     # ticker -> last close (Decimal)
     sectors: dict = field(default_factory=dict)    # ticker -> sector
+    unsettled: dict = field(default_factory=dict)  # ticker -> shares not yet matured (cannot be sold)
 
     def value(self, ticker):
-        return self.positions.get(ticker, 0) * self.prices.get(ticker, 0.0)
+        return self.positions.get(ticker, 0) * self.prices.get(ticker, Decimal(0))
+
+    def matured(self, ticker):
+        return self.positions.get(ticker, 0) - self.unsettled.get(ticker, 0)
+
+
+def _dec(x):
+    """Float panel value (ADTV, ATR) -> Decimal; None, NaN and inf give None."""
+    return None if x is None or not math.isfinite(x) else Decimal(str(float(x)))
 
 
 def check_order(order, pf, adtv20, sector, limits=LIMITS):
-    """Return (allowed_qty, reasons). Clips, never enlarges."""
+    """Return (allowed_qty, reasons). Clips buys, never enlarges. Selling more than is matured raises."""
     reasons = []
     if order.side == "SELL":
         held = pf.positions.get(order.ticker, 0)
         if order.qty > held:
-            reasons.append("long_only")
-        return min(order.qty, held), reasons
+            raise SettlementViolationError(f"{order.ticker}: sell {order.qty} exceeds the {held} held (short)")
+        if order.qty > pf.matured(order.ticker):
+            raise SettlementViolationError(
+                f"{order.ticker}: sell {order.qty} exceeds the {pf.matured(order.ticker)} matured shares")
+        return order.qty, reasons
 
-    if not adtv20 or adtv20 <= 0:
+    adtv20 = _dec(adtv20)
+    if adtv20 is None or adtv20 <= 0:
         return 0, ["no_adtv"]
     if order.ticker not in pf.positions and len(pf.positions) >= limits.max_names:
         return 0, ["max_names"]
@@ -111,17 +129,21 @@ class RiskGate:
 
 def size_position(equity, atr, limits=LIMITS):
     """Shares such that a 1-ATR move costs risk_per_atr of equity. Caps are applied later by check_order."""
-    if not atr or not math.isfinite(atr) or atr <= 0:
+    atr = _dec(atr)
+    if atr is None or atr <= 0:
         return 0
     return math.floor(limits.risk_per_atr * equity / atr)
 
 
 def exit_list(pf, adtv20, limits=LIMITS):
-    """Kill-switch exit list, slowest-to-exit first, at max_adtv_pct daily participation."""
+    """Kill-switch exit list, slowest-to-exit first, at max_adtv_pct daily participation. Matured shares only."""
     rows = []
-    for t, qty in pf.positions.items():
-        value = pf.value(t)
-        a = adtv20.get(t)
+    for t in pf.positions:
+        qty = pf.matured(t)
+        if qty <= 0:
+            continue
+        value = qty * pf.prices.get(t, Decimal(0))
+        a = _dec(adtv20.get(t))
         days = math.ceil(value / (limits.max_adtv_pct * a)) if a else None
         rows.append({"ticker": t, "qty": qty, "value": value, "days_to_exit": days})
     return sorted(rows, key=lambda r: (r["days_to_exit"] is not None, -(r["days_to_exit"] or 0)))
