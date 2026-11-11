@@ -118,7 +118,7 @@ def decide(book, strat, p, t, regime, gate_open):
     risk_mult = Decimal("0.5") if base == "NEUTRAL" else Decimal(1)
     last = p.close.ffill().iloc[t]
     pf = Portfolio(equity=eq, peak_equity=eq, day_start_equity=eq, positions=dict(book["positions"]),
-                   prices={tk: _D(last[tk]) for tk in book["positions"]}, unsettled=unsettled_shares(book, p, t))
+                   prices={tk: _D(last.get(tk, 0.0)) for tk in book["positions"]}, unsettled=unsettled_shares(book, p, t))
     elig = getattr(strat, "elig", None)
     adtv = p.adtv.iloc[t].values
     thr = (np.nanpercentile(adtv[elig[t]], 200 / 3) if base == "NEUTRAL" and elig is not None and elig[t].any()

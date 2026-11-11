@@ -140,7 +140,7 @@ def daily_run(prices, market, types, asof, state_path, journal_path, orders_dir,
             for k, v in book.new_book(state["cash"]).items():
                 state.setdefault(k, v)
             for t, q in state["positions"].items():  # hand-entered (no-strategy) positions have no lot: matured, valued today
-                state["lots"].setdefault(t, {"entry_date": "1900-01-01", "lag": 2,
+                state["lots"].setdefault(t, {"entry_date": "1900-01-01", "lag": book.settle_lag((categories or {}).get(t)),
                                              "basis": q * Decimal(str(last_close.get(t, 0.0)))})
             if new_bar:  # fill yesterday's orders once per session; a rerun keeps them
                 entry["fills"] = book.fill_pending(state, p, len(p.dates) - 1, categories=categories)
@@ -148,6 +148,8 @@ def daily_run(prices, market, types, asof, state_path, journal_path, orders_dir,
         day_start = state["day_start_equity"] if last == str(asof.date()) else state.get("equity", state["day_start_equity"])
         pos = {t: q for t, q in state["positions"].items() if q > 0}
         prices_now = {t: Decimal(str(last_close.get(t, 0.0))) for t in pos}
+        if status is not None:  # a held share with no price is valued at 0: say so, it can latch the kill switch
+            entry["alerts"] += [f"no price for held share {t}: valued at 0" for t in pos if t not in last_close]
         receivable = sum((a for _, a, _ in state.get("unsettled_cash", [])), Decimal(0))
         equity = state["cash"] + receivable + sum(q * prices_now[t] for t, q in pos.items())
         # no-strategy mode has no lots, so positions count as matured; without data no lot can be proven matured
@@ -209,7 +211,9 @@ def daily_run(prices, market, types, asof, state_path, journal_path, orders_dir,
 
     # never overwrite a state file we could not use, or save equity valued without prices
     if state_ok and status is not None:
-        state.update(asof=str(asof.date()), equity=equity, day_start_equity=day_start, peak_equity=pf.peak_equity)
+        state.update(asof=str(asof.date()), day_start_equity=day_start)
+        if bar_today or new_day:  # a same-day stale rerun is valued at the previous close: keep the bar's equity
+            state.update(equity=equity, peak_equity=pf.peak_equity)
         if bar_today:
             state["bar_asof"] = str(asof.date())
         Path(state_path).write_text(json.dumps(state, default=str))  # Decimal -> string; default= keeps it from raising

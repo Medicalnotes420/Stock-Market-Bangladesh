@@ -173,10 +173,46 @@ class Harness(unittest.TestCase):
             {"asof": prev, "bar_asof": prev, "equity": 1e7, "day_start_equity": 1e7, "cash": 1e7,
              "peak_equity": 1e7, "positions": {}, "pending_buys": {"T2": 100}}))
         daily_run(self.df[self.df.date < self.last], self.m, TYPES, self.last, strategy="S67", **self.paths)
-        self.assertEqual(json.loads(self.paths["state_path"].read_text())["positions"], {})   # bar not loaded: no fill
+        st = json.loads(self.paths["state_path"].read_text())
+        self.assertEqual(st["positions"], {})   # bar not loaded: no fill
+        self.assertEqual((st["asof"], st["bar_asof"]), (str(self.last.date()), prev))
         e = daily_run(self.df, self.m, TYPES, self.last, strategy="S67", **self.paths)
         self.assertEqual([(f["side"], f["ticker"]) for f in e["fills"]], [("BUY", "T2")])
         self.assertEqual(json.loads(self.paths["state_path"].read_text())["bar_asof"], str(self.last.date()))
+
+    def test_backfilled_lot_uses_the_settlement_lag_of_its_category(self):
+        prev = str(self.df.date.unique()[-2].date())
+        for cat, lag in (("Z", 3), ("A", 2)):
+            with self.subTest(cat=cat):
+                self.paths["state_path"].write_text(json.dumps(
+                    {"asof": prev, "equity": 1e7, "day_start_equity": 1e7, "cash": 1e7 - 30_000, "peak_equity": 1e7,
+                     "positions": {"T1": 1000}, "pending_sells": ["T1"]}))
+                daily_run(self.df, self.m, TYPES, self.last, strategy="S67", categories={"T1": cat}, **self.paths)
+                rows = json.loads(self.paths["state_path"].read_text())["unsettled_cash"]
+                self.assertEqual([(r[0], r[2]) for r in rows], [(str(self.last.date()), lag)])
+
+    def test_position_missing_from_the_data_does_not_break_the_decision(self):
+        prev = str(self.df.date.unique()[-2].date())
+        self.paths["state_path"].write_text(json.dumps(
+            {"asof": prev, "equity": 1e7, "day_start_equity": 1e7, "cash": 1e7 - 30_000, "peak_equity": 1e7,
+             "positions": {"T1": 1000, "NOPE": 5}, "pending_sells": ["T1"]}))
+        e = daily_run(self.df, self.m, TYPES, self.last, strategy="S67", **self.paths)
+        self.assertEqual(e["alerts"], ["no price for held share NOPE: valued at 0"])   # loud, but no state error
+        self.assertIn(e["regime"].split()[0], ("RISK_ON", "NEUTRAL"))   # else decide() never reaches Portfolio(...)
+        self.assertEqual(json.loads(self.paths["state_path"].read_text())["asof"], str(self.last.date()))
+
+    def test_stale_rerun_of_the_same_day_keeps_the_bar_equity(self):
+        prev = str(self.df.date.unique()[-2].date())
+        self.paths["state_path"].write_text(json.dumps(
+            {"asof": prev, "equity": 1e7, "day_start_equity": 1e7, "cash": 1e7 - 30_000, "peak_equity": 1,
+             "positions": {"T1": 1000}}))
+        daily_run(self.df, self.m, TYPES, self.last, strategy="S67", **self.paths)
+        s1 = json.loads(self.paths["state_path"].read_text())
+        daily_run(self.df[self.df.date < self.last], self.m, TYPES, self.last, strategy="S67", **self.paths)
+        s2 = json.loads(self.paths["state_path"].read_text())
+        self.assertEqual(s2["asof"], str(self.last.date()))
+        for k in ("equity", "peak_equity", "day_start_equity"):
+            self.assertEqual(s2[k], s1[k], k)
 
     def test_input_error_day_does_not_move_state(self):
         text = json.dumps({"asof": "2020-01-01", "equity": 1e7, "day_start_equity": 1e7, "cash": 1e6,
