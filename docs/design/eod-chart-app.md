@@ -478,12 +478,27 @@ the label cannot read them.
   later evaluation step and is out of v1; until then outcomes assume the entry filled, and say so.
 - `future[0]` is the entry bar, T. Target and stop touches count only from `future[min_hold]` onward.
   Shares bought at T cannot be sold before T+2 (T+3 for category Z). Bars are sessions the share traded
-  in; a no-trade day has no row and is not counted, which can understate the wait for an illiquid share.
+  in; a no-trade day has no row and is not counted, so after one `future[2]` is later than T+2. The wait is
+  never too short, only sometimes longer than needed.
   The clean file has no category column, so `min_hold` is a parameter with default 2.
 - Target and stop both inside one bar: counted as the stop.
 - Fewer than `horizon` bars in `future`: returns `None`. No partial labels.
 - Any bar within the horizon has `gap_flag`: returns `None`. An unadjusted bonus would read as a crash
   and trigger a false stop.
+- Any price in the horizon is zero or negative: returns `None` (the file has such a bar, section 2).
+- The window is `future[:horizon]`, so `horizon` counts the entry bar and the return is taken at the close
+  of `future[horizon - 1]`. Excursions cover the whole window, including the bars before `min_hold`.
+- Outcomes are for a long position. DSE has no shorting, so a bearish signal has no outcome label yet.
+- A touch is a price reaching the level, not a fill. On a gap down or a lower-lock day the loss can be
+  larger than `stop_pct`; `mae_pct` bounds it.
+- Touch levels carry a 0.0002 allowance. Adjusted prices are cut to 4 decimal places on load, so without
+  it an exact touch (entry 100, high 110) is lost about half the time once a later bonus rescales both,
+  and the label would change when the data is rebuilt.
+- **Do not label windows that reach past about 2026-01-08** (the A2 end, 2026-01-22, less 10 sessions,
+  holidays not checked). No
+  corporate action is inferred after that. A later bonus inside the daily limit carries no `gap_flag`,
+  reads as a plain fall, and can fire a stop that never happened. Cash dividends are not adjusted at all,
+  so an ex-dividend drop is in every label as a price fall.
 - Outcomes are gross. No costs are applied and nothing is imported from `dse_quant/backtest/`.
 
 Tests: changing any bar at or before `i` leaves the outcome unchanged; changing a bar after `i` leaves the
