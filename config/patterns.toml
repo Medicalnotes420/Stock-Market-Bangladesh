@@ -1,0 +1,9 @@
+# Pattern plugins for the chart app (docs/design/eod-chart-app.md 5.3). One table per plugin in
+# chartapp/patterns/. A missing table means the plugin's defaults, enabled. Restart the server after a change.
+# Unknown names, unknown keys and wrong types stop startup. Decimal parameters need a decimal point (0.5, 1.0).
+
+[swing_breakout]
+enabled = true
+left = 5             # bars before a swing high that must be lower
+right = 5            # bars after it that must not be higher; 1 <= right <= left, and left + right under 119
+min_break_pct = 0.5  # close must be this many percent above the swing high

@@ -99,8 +99,13 @@ def configure(plugins: Mapping, path: Path = CONFIG) -> dict[str, Mapping]:
             if type(value) is not want:
                 hint = " (write it with a decimal point)" if want is Decimal and type(value) is int else ""
                 raise ValueError(f"{path}: [{name}] {key} must be a {want.__name__}, got {value!r}{hint}")
+        cfg = MappingProxyType({**plugin.DEFAULTS, **table})
+        try:
+            getattr(plugin, "check", lambda cfg: None)(cfg)  # the plugin's own rules, e.g. right <= left
+        except ValueError as e:
+            raise ValueError(f"{path}: [{name}] {e}") from None
         if enabled:
-            out[name] = MappingProxyType({**plugin.DEFAULTS, **table})
+            out[name] = cfg
     return out
 
 

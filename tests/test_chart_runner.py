@@ -207,6 +207,21 @@ class Config(unittest.TestCase):
             with self.assertRaises(ValueError, msg=text):
                 self.conf(text)
 
+    def test_plugins_own_check_runs_at_load(self):
+        def check(cfg):
+            if cfg["left"] > 9:
+                raise ValueError("left too big")
+        plugins = {"alpha": SimpleNamespace(NAME="alpha", DEFAULTS={"left": 5}, check=check)}
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        p = Path(d.name) / "patterns.toml"
+        p.write_text("[alpha]\nleft = 9\n", encoding="utf-8")
+        self.assertEqual(dict(R.configure(plugins, p)["alpha"]), {"left": 9})
+        for text in ("[alpha]\nleft = 10\n", "[alpha]\nenabled = false\nleft = 10\n"):  # checked even when off
+            p.write_text(text, encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, r"\[alpha\] left too big"):
+                R.configure(plugins, p)
+
     def test_hash_follows_the_config(self):
         a, b = R.config_hash({"left": 5, "pct": Decimal("0.5")}), R.config_hash({"pct": Decimal("0.5"), "left": 5})
         self.assertEqual(a, b)

@@ -6,6 +6,8 @@ A plugin module defines:
     LOOKBACK  int, the most bars it needs; the runner never passes more
     DEFAULTS  dict of parameter -> default (int, Decimal, bool or str)
     detect(bars, cfg) -> Detection | None    "does a signal fire on bars[-1]?"
+    check(cfg)  optional; raise ValueError for config that is the right type but cannot work.
+                Called once at startup, so a bad value stops the server and not the first request.
 
 Rules: fire only on the bar where the condition first becomes true; pure (no I/O, no state); Decimal only;
 thresholds are ratios or percentages, never BDT amounts; every Point date is a date in `bars`.
