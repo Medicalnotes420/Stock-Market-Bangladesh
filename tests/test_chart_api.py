@@ -18,7 +18,7 @@ def no_floats(resp):
     """Parse a response body; any JSON float anywhere fails the test."""
     def boom(text):
         raise AssertionError(f"JSON float {text} in {resp.url}")
-    return json.loads(resp.text, parse_float=boom)
+    return json.loads(resp.text, parse_float=boom, parse_constant=boom)  # parse_constant: NaN and Infinity
 
 
 class Api(unittest.TestCase):

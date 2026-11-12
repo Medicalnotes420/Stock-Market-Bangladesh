@@ -311,7 +311,8 @@ The rule is enforced by construction, then checked by tests.
 - **Blocked windows.** The runner, not the plugin, drops a signal when either holds:
   - an ex-date from `data/clean/actions.csv` lies in the last 10 bars of the window. In those sessions
     the action was not yet accepted, so a same-day run would have seen a raw gap where the file shows a
-    smooth series;
+    smooth series. A window that starts after the ex-date is not blocked: adjustment only rescales bars
+    before the ex-date, so that window is the same in both views;
   - any bar in the window has `gap_flag`. This keeps limit-breaking moves that no accepted action explains,
     including every bonus after October 2025, from being read as breakdowns.
 
@@ -337,9 +338,13 @@ class Pivot:
     price: Decimal
 
 def pivots(bars, left: int, right: int) -> list[Pivot]
-    # Fractal swing: bars[idx].high is above the highs of `left` bars before and `right` bars after
-    # (lows mirrored). confirmed_idx = idx + right. Only pivots with confirmed_idx <= len(bars) - 1
-    # are returned. Equal highs: the earliest bar is the pivot.
+    # Fractal swing: bars[idx].high is above the highs of `left` bars before and not below the highs
+    # of `right` bars after (lows mirrored), so of equal highs the earliest bar is the pivot.
+    # confirmed_idx = idx + right. Only pivots with confirmed_idx <= len(bars) - 1 are returned.
+    # Needs 1 <= right <= left: with a shorter look-back two equal highs could both be pivots.
+    # A bar with a non-positive price is never a pivot.
+    # On a sliding window the result is the full-series pivots minus those within `left` bars of the
+    # window's left edge; a bar's pivot status never changes because the window moved.
 
 def zigzag(bars, reversal_pct: Decimal) -> list[Pivot]
     # Alternating highs and lows separated by at least reversal_pct. confirmed_idx is the bar whose
@@ -533,10 +538,11 @@ Each step ends with its tests passing.
 2. `api.py` with `/api/meta`, `/api/tickers`, `/api/bars`, and the no-float-in-JSON test.
 3. `web/`: candles, close-only line fallback, volume, ticker search, staleness badge. **First usable point: a chart viewer.**
 4. `geometry.pivots` with synthetic tests.
-5. `runner.py`: discovery, config validation, slicing, blocked windows, contract checks, cache. Prefix,
-   blocked-window and contract tests.
+5. `runner.py`: discovery, config validation, slicing, blocked windows, contract checks. Prefix,
+   blocked-window and contract tests. `Point`, `Segment` and `Detection` live in `patterns/__init__.py`
+   so plugins import them without importing the runner.
 6. `patterns/swing_breakout.py` with scale and purity tests.
-7. `/api/detections`; markers and the signal table in `web/`.
+7. `/api/detections` with the per-`(ticker, pattern)` signal cache; markers and the signal table in `web/`.
 8. `labels.py` with its tests.
 9. `labeled.toml` harness. Needs a person to label the first examples.
 
