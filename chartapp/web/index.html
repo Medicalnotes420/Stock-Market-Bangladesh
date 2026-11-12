@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DSE EOD</title>
+<style>
+  html, body { height: 100%; margin: 0; }
+  body { display: flex; flex-direction: column; font: 14px/1.4 system-ui, sans-serif; color: #1a1a1a; background: #fff; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 8px 12px; border-bottom: 1px solid #ddd; }
+  form { display: flex; gap: 6px; align-items: center; }
+  input, button { font: inherit; padding: 4px 8px; }
+  #stale { margin-left: auto; padding: 2px 8px; border: 1px solid #2e7d32; border-radius: 4px; }
+  #stale.old { border-color: #b26a00; background: #fff4e0; }
+  #legend { padding: 4px 12px; min-height: 1.4em; font-family: ui-monospace, Consolas, monospace; white-space: pre-wrap; }
+  #chart { flex: 1; min-height: 300px; }
+</style>
+</head>
+<body>
+<header>
+  <form id="pick">
+    <label for="ticker">Ticker</label>
+    <input id="ticker" list="tickers" autocomplete="off" spellcheck="false" size="14">
+    <datalist id="tickers"></datalist>
+    <button>Show</button>
+  </form>
+  <span id="status" role="status">Loading…</span>
+  <span id="stale" role="status"></span>
+</header>
+<div id="legend" aria-live="off"></div>
+<div id="chart" role="img" aria-label="Price and volume chart; the line above it gives the values of the bar under the pointer"></div>
+<script src="vendor/lightweight-charts.standalone.production.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>

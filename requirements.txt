@@ -3,3 +3,7 @@ pandas==3.0.6
 numpy==2.5.4
 anthropic==2.5.0
 pypdf==6.21.4
+# chartapp/ (docs/design/eod-chart-app.md); httpx is for FastAPI's test client only
+fastapi==0.162.4
+uvicorn==0.54.0
+httpx==0.28.1
