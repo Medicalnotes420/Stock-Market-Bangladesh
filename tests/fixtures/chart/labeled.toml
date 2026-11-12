@@ -1,0 +1,42 @@
+# Hand-labeled historical examples for the pattern plugins (docs/design/eod-chart-app.md 7.3).
+# Run by tests/test_chart_labeled.py against data/clean, so only on a machine that has the data.
+# Dates only, no prices: no market data is committed here.
+#
+# HOW TO LABEL, so that hindsight stays out:
+#   1. Open the chart cut off at the day you are judging:  http://localhost:8000/?to=2019-03-14#SQURPHARMA
+#      Bars after that day and the plugin's own signals are hidden in that view.
+#   2. Decide from that chart alone: is the pattern complete on this bar? Write a "fire" example.
+#      Or pick a stretch where it is clearly absent and write a "none" example.
+#   3. Do not look at what happened next, and do not pick examples because they worked. Outcomes are
+#      computed by chartapp/labels.py, never typed here. The harness fails once a pattern has 10 or more
+#      "fire" examples and every one of them went on to gain. If that happens, label more examples the
+#      same way, by shape and without looking ahead. Do not go hunting for ones that failed: choosing
+#      losers on purpose is the same mistake as choosing winners.
+#   5. If the harness says a day is blocked, a gap flag or a corporate action sits in that bar's window.
+#      The cut-off view hides those on purpose. Drop the example or move it; do not work around the block.
+#   4. Label by eye, not by copying the dates the plugin already marks. An example copied from the plugin
+#      tests nothing.
+#
+# A "fire" example: the plugin must signal within `within` trading sessions of signal_date.
+#   [[example]]
+#   pattern = "swing_breakout"
+#   ticker = "SQURPHARMA"
+#   signal_date = 2019-03-14      # must be a day the share traded
+#   within = 2                    # optional, default 0
+#   expect = "fire"
+#   note = "clean break of the February swing high"
+#
+# A "none" example: the plugin must not signal anywhere from `from` to `to`, both included.
+#   [[example]]
+#   pattern = "swing_breakout"
+#   ticker = "GP"
+#   from = 2020-06-01
+#   to = 2020-08-31
+#   expect = "none"
+#   note = "range-bound, three failed pokes above the high"
+#
+# Aim for about ten of each per pattern. The dates above are made up to show the format.
+
+# Examples dated on or after this day are the holdout: they are run and reported, but plugin thresholds
+# must not be tuned to make them pass. Tune only on the examples before it.
+holdout_from = 2023-01-01

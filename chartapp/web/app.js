@@ -19,8 +19,9 @@ function legend(b) {
   if (!b) return '';
   const signals = fired.has(b.t) ? `   signal: ${fired.get(b.t).join(', ')}` : '';
   if (closeOnly(b)) return `${b.t}   Close ${b.c}   (close only)${signals}`;
-  const flags = b.flags.length ? `   [${b.flags.join(', ')}]` : '';
-  const raw = b.adj === '1.0' ? '' : `   adjusted; traded close ${b.c_raw}`;
+  const flags = b.flags.length && !cut ? `   [${b.flags.join(', ')}]` : '';
+  // not in the labeling view: an adjustment factor says a bonus or split came later
+  const raw = b.adj === '1.0' || cut ? '' : `   adjusted; traded close ${b.c_raw}`;
   return `${b.t}   O ${b.o}   H ${b.h}   L ${b.l}   C ${b.c}   Vol ${b.v.toLocaleString()}${raw}${flags}${signals}`;
 }
 
@@ -54,20 +55,28 @@ function table(signals) {
   }
 }
 
+// Labeling view: /?to=2019-03-14#TICKER shows the chart as it stood that day, with later bars and the
+// plugins' own signals hidden, so an example can be labeled without knowing what came next.
+const cut = new URLSearchParams(location.search).get('to');
+
 async function load(ticker) {
   const mine = ++loading;
   $('status').textContent = `Loading ${ticker}…`;
   try {
-    const d = await api('/api/bars/' + encodeURIComponent(ticker));
+    const d = await api('/api/bars/' + encodeURIComponent(ticker) + (cut ? '?to=' + encodeURIComponent(cut) : ''));
     if (mine !== loading) return;  // a newer pick overtook this one
     bars = d.bars;
     byDate = new Map(bars.map(b => [b.t, b]));
     fired = new Map();
     chart.set(bars);
-    chart.mark(bars, []);  // gap and lock markers now; signals when they arrive
+    // gap and lock markers now; signals when they arrive. Not in the labeling view: those flags are worked
+    // out with later data
+    chart.mark(cut ? [] : bars, []);
     table([]);
     const k = known.get(ticker);
-    $('status').textContent = `${ticker} · ${d.type} · ${k.bars.toLocaleString()} bars, ${k.first} to ${k.last}`;
+    $('status').textContent = cut
+      ? `${ticker} · ${d.type} · cut off at ${cut}: ${bars.length.toLocaleString()} bars, later bars hidden`
+      : `${ticker} · ${d.type} · ${k.bars.toLocaleString()} bars, ${k.first} to ${k.last}`;
     $('legend').textContent = legend(bars.at(-1));
     $('ticker').value = ticker;
     document.title = `${ticker} · DSE EOD`;
@@ -78,6 +87,10 @@ async function load(ticker) {
   // signals take a couple of seconds the first time a ticker is opened, so the chart does not wait for them.
   // The guard is "are these bars still on screen", not the load counter: a later pick that failed to load
   // leaves this chart up, and its signals must still arrive.
+  if (cut) {
+    $('sigstatus').textContent = 'hidden in the labeling view';
+    return;
+  }
   const shown = bars;
   $('sigstatus').textContent = 'Finding signals…';
   try {

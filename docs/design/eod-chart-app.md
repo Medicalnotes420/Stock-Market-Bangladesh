@@ -94,6 +94,7 @@ tests/
   test_chart_bars.py  test_chart_geometry.py  test_chart_runner.py
   test_chart_patterns.py  test_chart_labels.py  test_chart_api.py
   test_chart_static.py            AST rules: no float, no network or LLM imports
+  test_chart_labeled.py           runs fixtures/chart/labeled.toml against data/clean
   fixtures/chart/labeled.toml     hand-labeled historical examples (dates only, no prices)
 docs/design/eod-chart-app.md
 ```
@@ -446,10 +447,18 @@ note = "range-bound, three failed pokes above the high"
 - `fire`: the plugin, run walk-forward through the runner, signals within `within` sessions of
   `signal_date`.
 - `none`: no signal anywhere in `[from, to]`.
-- The person labels from a chart that ends at the candidate signal bar (`/api/bars/{ticker}?to=<date>`),
-  so they cannot see what happened next.
+- The person labels from a chart that ends at the candidate signal bar, so they cannot see what happened
+  next. The page has a labeling view for this: `http://localhost:8000/?to=2019-03-14#TICKER` loads bars up
+  to that day only and hides the plugins' signals and the gap and lock flags. It is a fixed cut set in the
+  address, not a replay slider.
+- The harness is `tests/test_chart_labeled.py`. The file's `holdout_from` date splits the examples; both
+  halves are run, as separate tests, so a holdout failure is visible as such. With no examples the three
+  real-data tests are skipped, not passed.
+- Once a pattern has 10 or more `fire` examples with a computable 20-session outcome, the harness fails if
+  every one of them gained.
 - Aim for about ten `fire` and ten `none` per pattern. Once the shape labels are fixed, run `labels.py`
-  over the `fire` set; if every example went on to win, label more until failures are in the set. A
+  over the `fire` set; if every example went on to win, label more the same way, by shape and without
+  looking ahead. Do not search for losers: picking them on purpose is outcome-driven selection too. A
   plugin that only matches the winners has been tuned on hindsight.
 - Examples are split by date. Thresholds are tuned on examples before a cutoff; later ones are a holdout
   that is run, not tuned on.
