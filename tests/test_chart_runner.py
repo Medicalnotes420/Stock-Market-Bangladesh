@@ -133,6 +133,12 @@ class Contract(unittest.TestCase):
         self.fails(lambda bars, cfg: Detection("neutral", score=Decimal(5)))
         self.fails(lambda bars, cfg: Detection("neutral", score=Decimal("-0.1")))
 
+    def test_exponent_notation_is_refused(self):
+        self.assertEqual(str(Decimal("0.0") * Decimal("0.000125")), "0E-7")  # how one arises
+        self.fails(lambda bars, cfg: Detection("neutral", levels={"x": Decimal("0.0") * Decimal("0.000125")}))
+        self.fails(lambda bars, cfg: Detection("neutral", points=(Point(bars[-1].date, Decimal("1E+2"), "x"),)))
+        self.fails(lambda bars, cfg: Detection("neutral", score=Decimal("0E-7")))
+
     def test_text_fields_must_be_text(self):
         self.fails(lambda bars, cfg: Detection("neutral", note=1.5))
         self.fails(lambda bars, cfg: Detection("neutral", points=(Point(bars[-1].date, Decimal(1), 1.5),)))

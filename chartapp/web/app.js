@@ -3,9 +3,10 @@ import {closeOnly, create} from './chart.js';
 
 const $ = id => document.getElementById(id);
 const chart = create($('chart'));
-let known = new Map();   // ticker -> {type, first, last, bars}
-let byDate = new Map();  // date -> bar of the ticker on screen
-let latest = null;
+let known = new Map();    // ticker -> {type, first, last, bars}
+let bars = [];            // bars of the ticker on screen
+let byDate = new Map();   // date -> bar
+let fired = new Map();    // date -> names of the patterns that fired on it
 let loading = 0;
 
 async function api(path) {
@@ -16,10 +17,41 @@ async function api(path) {
 
 function legend(b) {
   if (!b) return '';
+  const signals = fired.has(b.t) ? `   signal: ${fired.get(b.t).join(', ')}` : '';
+  if (closeOnly(b)) return `${b.t}   Close ${b.c}   (close only)${signals}`;
   const flags = b.flags.length ? `   [${b.flags.join(', ')}]` : '';
   const raw = b.adj === '1.0' ? '' : `   adjusted; traded close ${b.c_raw}`;
-  if (closeOnly(b)) return `${b.t}   Close ${b.c}   (close only)`;
-  return `${b.t}   O ${b.o}   H ${b.h}   L ${b.l}   C ${b.c}   Vol ${b.v.toLocaleString()}${raw}${flags}`;
+  return `${b.t}   O ${b.o}   H ${b.h}   L ${b.l}   C ${b.c}   Vol ${b.v.toLocaleString()}${raw}${flags}${signals}`;
+}
+
+function cell(row, text) {
+  const td = row.insertCell();
+  td.textContent = text;
+  return td;
+}
+
+function table(signals) {
+  const body = $('signals').tBodies[0];
+  body.replaceChildren();
+  for (const s of signals.toReversed()) {  // newest first
+    const row = body.insertRow();
+    const pick = document.createElement('button');
+    pick.type = 'button';
+    pick.textContent = s.signal_date;
+    pick.setAttribute('aria-pressed', 'false');
+    pick.addEventListener('click', () => {
+      const on = pick.getAttribute('aria-pressed') !== 'true';  // a second click clears the selection
+      for (const b of body.querySelectorAll('button')) b.setAttribute('aria-pressed', 'false');
+      pick.setAttribute('aria-pressed', String(on));
+      chart.select(on ? s : null, bars);
+    });
+    row.insertCell().append(pick);
+    cell(row, s.pattern);
+    cell(row, s.direction);
+    cell(row, Object.entries(s.levels).map(([name, value]) => `${name} ${value}`).join(', '));
+    cell(row, s.points.map(p => `${p.role} ${p.p} on ${p.t}`).join(', '));
+    cell(row, s.note);
+  }
 }
 
 async function load(ticker) {
@@ -28,16 +60,36 @@ async function load(ticker) {
   try {
     const d = await api('/api/bars/' + encodeURIComponent(ticker));
     if (mine !== loading) return;  // a newer pick overtook this one
-    byDate = new Map(d.bars.map(b => [b.t, b]));
-    latest = d.bars.at(-1);
-    chart.set(d.bars);
+    bars = d.bars;
+    byDate = new Map(bars.map(b => [b.t, b]));
+    fired = new Map();
+    chart.set(bars);
+    chart.mark(bars, []);  // gap and lock markers now; signals when they arrive
+    table([]);
     const k = known.get(ticker);
     $('status').textContent = `${ticker} · ${d.type} · ${k.bars.toLocaleString()} bars, ${k.first} to ${k.last}`;
-    $('legend').textContent = legend(latest);
+    $('legend').textContent = legend(bars.at(-1));
     $('ticker').value = ticker;
     document.title = `${ticker} · DSE EOD`;
   } catch (e) {
     if (mine === loading) $('status').textContent = `Could not load ${ticker}: ${e.message}`;
+    return;
+  }
+  // signals take a couple of seconds the first time a ticker is opened, so the chart does not wait for them.
+  // The guard is "are these bars still on screen", not the load counter: a later pick that failed to load
+  // leaves this chart up, and its signals must still arrive.
+  const shown = bars;
+  $('sigstatus').textContent = 'Finding signals…';
+  try {
+    const signals = await api('/api/detections/' + encodeURIComponent(ticker));
+    if (bars !== shown) return;
+    for (const s of signals) fired.set(s.signal_date, [...(fired.get(s.signal_date) ?? []), s.pattern]);
+    chart.mark(bars, signals);
+    table(signals);
+    $('sigstatus').textContent = signals.length === 1 ? '1 signal' : `${signals.length} signals`;
+    $('legend').textContent = legend(bars.at(-1));
+  } catch (e) {
+    if (bars === shown) $('sigstatus').textContent = `Could not load signals: ${e.message}`;
   }
 }
 
@@ -78,5 +130,5 @@ $('pick').addEventListener('submit', e => {
   else $('status').textContent = `Unknown ticker ${t}`;
 });
 addEventListener('hashchange', fromHash);
-chart.onHover(time => { $('legend').textContent = legend(byDate.get(time) ?? latest); });
+chart.onHover(time => { $('legend').textContent = legend(byDate.get(time) ?? bars.at(-1)); });
 start().catch(e => { $('status').textContent = `Could not start: ${e.message}`; });

@@ -203,6 +203,11 @@ never depends on the query window.
 ```
 (Values above are illustrative, not real detections.)
 
+A segment is `{"start": {"t", "p", "role"}, "end": {"t", "p", "role"}, "role": "support"}`. Signals come back
+oldest first. With no `pattern`, every enabled plugin is run; an unknown or disabled `pattern` is 404.
+Signals are computed on first request (about 2.5 s for a full history) and cached per ticker and plugin for
+the life of the process. Startup needs `actions.csv` beside the price file and a valid `config/patterns.toml`.
+
 Errors: unknown ticker or pattern is 404; bad dates are FastAPI's 422. The ticker is checked against the
 loaded set and is never used to build a file path.
 
@@ -502,13 +507,15 @@ logo on.
   in a line series that starts at the last real candle's close, so the two join. The rule is on the data,
   with no ticker name or date in the code. A share that traded at one price all day has volume and stays
   a candle.
-- Signals are series markers on `signal_date`. `points` are small markers, `segments` are two-point line
-  series, and `levels` are short horizontal line series that end at `signal_date`. The library's price
+- Signals are series markers on `signal_date`. Pressing a signal's date in the table selects it: only then
+  are its `points` drawn as small markers, its `segments` as two-point line
+  series, and its `levels` as short horizontal line series that end at `signal_date`. Drawing every
+  signal's shape at once would bury the chart. The library's price
   lines span the whole chart, so they are not used. Nothing is drawn to the right of the signal bar.
 - `gap` and lock flags are shown as small markers so an unadjusted gap is not mistaken for a crash.
 - A table under the chart lists signals. It prints the API's strings as they came.
 
-Float boundary: `chart.js` has one function, `split(bars)`, that calls `Number()` on price strings.
+Float boundary: only `chart.js` calls `Number()` on price strings, and what it makes goes to the chart.
 `app.js` and the table never do arithmetic on prices.
 
 ## 9. Minimum first version

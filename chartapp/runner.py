@@ -130,6 +130,8 @@ def _check(plugin, d, window):
     def number(what, v):  # NaN and Infinity are Decimals too, and would reach the API's JSON
         if type(v) is not Decimal or not v.is_finite():
             raise bad(f"{what} is {v!r}, not a finite Decimal")
+        if "E" in str(v):  # 0 * 0.0001 prints as "0E-7", and the API sends str(v) as it is
+            raise bad(f"{what} prints as {v}; quantize it so it prints as a plain decimal")
 
     def text(what, v):
         if type(v) is not str:

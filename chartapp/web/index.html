@@ -14,6 +14,14 @@
   #stale.old { border-color: #b26a00; background: #fff4e0; }
   #legend { padding: 4px 12px; min-height: 1.4em; font-family: ui-monospace, Consolas, monospace; white-space: pre-wrap; }
   #chart { flex: 1; min-height: 300px; }
+  #found { max-height: 30vh; overflow: auto; border-top: 1px solid #ddd; padding: 4px 12px 8px; }
+  #found h2 { font-size: 14px; margin: 4px 0; }
+  #sigstatus { font-weight: normal; color: #555; margin-left: 8px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 2px 12px 2px 0; vertical-align: top; }
+  th { border-bottom: 1px solid #ddd; }
+  td button { padding: 1px 6px; }
+  td button[aria-pressed="true"] { background: #6a1b9a; color: #fff; border-color: #6a1b9a; }
 </style>
 </head>
 <body>
@@ -29,6 +37,16 @@
 </header>
 <div id="legend" aria-live="off"></div>
 <div id="chart" role="img" aria-label="Price and volume chart; the line above it gives the values of the bar under the pointer"></div>
+<section id="found" aria-labelledby="foundhead">
+  <h2 id="foundhead">Signals <span id="sigstatus" role="status"></span></h2>
+  <table id="signals">
+    <thead><tr><th scope="col">Date</th><th scope="col">Pattern</th><th scope="col">Direction</th>
+      <th scope="col">Levels</th><th scope="col">Shape</th><th scope="col">Note</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <p>Press a date to draw that signal's shape on the chart; press it again to clear. Arrows mark signals,
+    small dots mark limit-lock days, and "gap" marks a move no corporate action explains.</p>
+</section>
 <script src="vendor/lightweight-charts.standalone.production.js"></script>
 <script type="module" src="app.js"></script>
 </body>
