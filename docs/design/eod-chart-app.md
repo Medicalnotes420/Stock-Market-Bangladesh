@@ -1,6 +1,7 @@
 # DSE EOD chart app — design
 
-Status: design only, nothing built. Written 2026-11-11.
+Status: v1 is built, and so is the first step after it (trendline utilities and `trendline_break`,
+2026-11-15). Written 2026-11-11 as a design; sections marked "settled when built" record what the code decided.
 
 A local, read-only web app: pick a DSE ticker, see its end-of-day candles, and see where pattern
 plugins fired. FastAPI backend, Lightweight Charts frontend, pure-Python pattern plugins.
@@ -206,7 +207,8 @@ never depends on the query window.
 
 A segment is `{"start": {"t", "p", "role"}, "end": {"t", "p", "role"}, "role": "support"}`. Signals come back
 oldest first. With no `pattern`, every enabled plugin is run; an unknown or disabled `pattern` is 404.
-Signals are computed on first request (about 2.5 s for a full history) and cached per ticker and plugin for
+Signals are computed on first request (about 2.5 s for a full history with `swing_breakout`, about 5 s more
+with `trendline_break`) and cached per ticker and plugin for
 the life of the process. Startup needs `actions.csv` beside the price file and a valid `config/patterns.toml`.
 
 Errors: unknown ticker or pattern is 404; bad dates are FastAPI's 422. The ticker is checked against the
@@ -329,6 +331,39 @@ Cost: one ticker is at most 3,353 bars (median 3,008), each call sees at most `L
 `shortcut: every bar re-runs detect on its own slice, fine for one ticker on demand; a market-wide scanner
 needs an incremental driver, and that driver must pass the prefix test in 7.2 before it replaces this one.`
 
+### 5.5 `trendline_break` (settled when built, 2026-11-15)
+
+```toml
+[trendline_break]
+enabled = true
+reversal_pct = 5.0   # size of a zigzag swing
+min_break_pct = 0.5  # how far past the line the close must be, as a percentage of the line's price
+```
+
+- **The line** goes through the last two confirmed `zigzag` pivots of one kind in the window. Two highs that
+  fall make a resistance line; a close above it is a bullish signal. Two lows that rise make a support line;
+  a close below it is a bearish signal. A line that slopes the other way, or is flat, is ignored: a flat
+  line is a level, which `swing_breakout` covers.
+- **Once per pair of pivots.** It fires on the first bar since the second pivot whose close is beyond the
+  line by more than `min_break_pct`. A line already broken by the time its second pivot was confirmed never
+  fires. `crossed` alone is not enough for this (section 6), so the plugin checks every bar since the pivot.
+  A later pivot that lands exactly on a broken line makes a new pair, which can fire again: the line held
+  once more and then gave way. Closes between the two pivots do not count; the line did not exist yet.
+- `min_break_pct` must be under 100: at 100 a line's lower edge is zero and nothing can close below it.
+- **What is returned.** Two `Point`s (the pivots, `high_1`/`high_2` or `low_1`/`low_2`) and one `Segment`
+  with role `resistance` or `support`, from the first pivot to the signal bar. The segment's end price is the
+  line's price on the signal bar, not the close, cut to 4 decimal places. `levels` is empty: a level is a
+  horizontal line, and the generic scale test compares levels exactly, which a rounded price cannot pass.
+- **Pivots are closes** (section 6), so the line runs through closes, not wicks. It is tested against
+  closes, so the two agree.
+- A zero or negative close anywhere since the second pivot means no signal for that line.
+- If both lines break on one bar, the bullish one is reported.
+- `LOOKBACK` is 250. Two swings of one kind plus the move into the first must fit, and at 5% the index
+  often needs most of a year. The price is more dropped signals, since one gap-flagged bar blocks every
+  window that holds it (5.4).
+- Not built: a minimum number of touches, a score, a maximum line age, lines through more than two pivots
+  (`fit` and `touches` are there for that).
+
 ## 6. Shared pivot and trendline utilities (`geometry.py`)
 
 All functions take `Sequence[Bar]` and return indices into that sequence plus `Decimal` prices. The x axis
@@ -353,8 +388,21 @@ def pivots(bars, left: int, right: int) -> list[Pivot]
     # window's left edge; a bar's pivot status never changes because the window moved.
 
 def zigzag(bars, reversal_pct: Decimal) -> list[Pivot]
-    # Alternating highs and lows separated by at least reversal_pct. confirmed_idx is the bar whose
-    # close first completes the reversal. The unfinished last leg is not returned.
+    # Alternating highs and lows of the CLOSES, each leg at least reversal_pct measured from its low end
+    # (high >= low * (1 + pct/100), for rises and falls alike). confirmed_idx is the bar whose close
+    # first completes the reversal. The unfinished last leg is not returned.
+    # Settled when built (2026-11-14):
+    # - It is a rule about the bars around a pivot, not a scan from the first bar. A close is a high
+    #   when a close a full reversal below it comes before any higher close going forward, and before
+    #   any close as high or higher going back (lows mirrored; of equal closes the earliest wins).
+    #   A scan from the first bar gives different pivots when its start moves; this rule cannot.
+    # - So a prefix returns exactly the pivots confirmed inside it, and a sliding window returns the
+    #   full-series pivots minus those whose backward reversal lies left of the window. The window's
+    #   edge is never evidence, so the first leg of a window is not returned either.
+    # - Closes only, and one ratio both ways: with highs and lows as extremes, or with "r% off the
+    #   high" for falls, alternation cannot be guaranteed under that rule. Pivot.price is the close.
+    # - A non-positive close is never a pivot and never evidence. Across one, pivots need not
+    #   alternate and a leg can be any size.
 
 @dataclass(frozen=True)
 class Line:
@@ -367,8 +415,20 @@ def value_at(line: Line, idx: int) -> Decimal
 def fit(points: Sequence[Pivot]) -> Line                     # least squares, Decimal arithmetic
 def touches(line, pivots, tol_pct: Decimal) -> list[Pivot]   # pivots within tol_pct of the line
 def crossed(line, bars, idx: int, side: Literal["above", "below"], tol_pct: Decimal) -> bool
-    # close at idx is beyond the line by tol_pct and the close at idx - 1 was not
+    # close at idx is beyond the line by more than tol_pct and the close at idx - 1 was not
 ```
+
+Settled when built (2026-11-14):
+
+- `crossed` reads `bars[idx - 1]` and `bars[idx]` only. It is False at `idx` 0, and wherever a close or the
+  line's price is zero or negative. "The bar before was not beyond" is not "first cross ever": a plugin
+  that must fire once per line checks the earlier bars itself.
+- A close exactly on the tolerance edge is not beyond it; a pivot exactly on the edge touches.
+- `touches` skips pivots where the line's price is zero or negative. A negative `tol_pct` is a `ValueError`.
+- `line_through` on one bar, and `fit` on fewer than two different bars, raise `ValueError`.
+- `fit` measures x from its first point, so the line is the same wherever the window starts.
+- Slopes are held to 40 digits and line prices and edges rounded back to 28. Without that a close sitting
+  exactly on a line or edge can read as a cross at one price scale and not at another.
 
 Rules that keep these safe to share:
 
@@ -403,6 +463,9 @@ this design.
 
 - **Bars**: text to `Decimal` with no float step; quantization of long adjusted values; a truncated gzip
   raises.
+- **Geometry (trendlines)**: `zigzag` against a hand-built shape, against a one-pass textbook scan written
+  separately in the test, and on every prefix and many sliding windows of a random walk; line values,
+  `touches` and `crossed` on and either side of the edge, at several price scales.
 - **Geometry**: a hand-built W gives the expected pivots; a pivot is absent from `bars[:idx + right]` and
   present in `bars[:idx + right + 1]`; equal highs resolve to the earliest; `fit` and `value_at` against
   hand-computed values.
@@ -555,6 +618,7 @@ In:
 Out, named so they are not built by accident:
 
 - Trendlines and `trendline_break` (`zigzag`, `Line`, `fit`, `touches`, `crossed`): first thing after v1.
+  Built 2026-11-15 (sections 5.5 and 6).
 - Market-wide scanner, as-of replay slider, indicator overlays, raw-price toggle, log scale.
 - `/api/patterns`, a ticker type filter, per-request config overrides, hot reload of data or config.
 - Outcome statistics pages or any edge claim.
@@ -577,7 +641,7 @@ Each step ends with its tests passing.
 8. `labels.py` with its tests.
 9. `labeled.toml` harness. Needs a person to label the first examples.
 
-After v1: trendline utilities and `trendline_break`, then decide on the scanner.
+After v1: trendline utilities and `trendline_break` (built 2026-11-15), then decide on the scanner.
 
 ## 11. Decisions and open question
 

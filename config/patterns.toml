@@ -7,3 +7,8 @@ enabled = true
 left = 5             # bars before a swing high that must be lower
 right = 5            # bars after it that must not be higher; 1 <= right <= left, and left + right under 119
 min_break_pct = 0.5  # close must be this many percent above the swing high
+
+[trendline_break]
+enabled = true
+reversal_pct = 5.0   # a zigzag swing is a move of the close of at least this many percent; must be positive
+min_break_pct = 0.5  # close must be this many percent of the line's price beyond the line; 0 to under 100
