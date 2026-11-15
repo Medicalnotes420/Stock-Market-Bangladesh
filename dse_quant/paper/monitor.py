@@ -1,6 +1,7 @@
 """Monitoring summary over the paper journal, plus the automatic alerts and a local status page."""
 import json
 from collections import Counter
+from decimal import Decimal
 from html import escape
 from pathlib import Path
 
@@ -9,11 +10,12 @@ STALE_ALERT_DAYS = 3
 
 def summarize(journal_path):
     rows = [json.loads(l) for l in Path(journal_path).read_text().splitlines() if l.strip()]
-    eq = [r["equity"] for r in rows if r.get("equity") is not None]  # state-error runs log no equity
-    peak, mdd = 0.0, 0.0
+    # state-error runs log no equity; journal money is a string (new) or a float (old)
+    eq = [Decimal(str(r["equity"])) for r in rows if r.get("equity") is not None]
+    peak, mdd = Decimal(0), Decimal(0)
     for e in eq:
         peak = max(peak, e)
-        mdd = max(mdd, 1 - e / peak if peak else 0.0)
+        mdd = max(mdd, 1 - e / peak if peak else Decimal(0))
     run = best = 0
     for r in rows:
         run = run + 1 if "stale_data" in r.get("gate_reasons", []) else 0
@@ -30,8 +32,8 @@ def summarize(journal_path):
         alerts.append(f"{errors} runs had input errors")
     return {"runs": len(rows), "first": rows[0]["asof"] if rows else None, "last": rows[-1]["asof"] if rows else None,
             "gate_open_days": sum(bool(r.get("gate_open")) for r in rows), "gate_reasons": dict(reasons),
-            "regimes": dict(Counter(r.get("regime") for r in rows)), "equity_last": eq[-1] if eq else None,
-            "max_drawdown": mdd, "max_consecutive_stale": best, "alerts": alerts}
+            "regimes": dict(Counter(r.get("regime") for r in rows)), "equity_last": float(eq[-1]) if eq else None,
+            "max_drawdown": float(mdd), "max_consecutive_stale": best, "alerts": alerts}
 
 
 PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -53,7 +55,7 @@ def status_page(journal_path, out_path, last_n=30):
     rows = [json.loads(l) for l in Path(journal_path).read_text().splitlines() if l.strip()]
     s, r = summarize(journal_path), rows[-1]
     gate = '<span class="ok">OPEN</span>' if r.get("gate_open") else '<span class="bad">CLOSED</span>'
-    eq = lambda v: "n/a" if v is None else f"{v:,.0f}"
+    eq = lambda v: "n/a" if v is None else f"{Decimal(str(v)):,.0f}"
     cards = "".join(f'<div class="card"><span class="mute">{k}</span><b>{v}</b></div>' for k, v in [
         ("Latest run", escape(r["asof"])), ("Gate", gate), ("Regime", escape(str(r.get("regime")))),
         ("Equity", eq(r.get("equity"))), ("Max drawdown", f"{s['max_drawdown']:.1%}"),
@@ -64,7 +66,7 @@ def status_page(journal_path, out_path, last_n=30):
         alerts += (f'<h2>Paper strategy: {escape(r.get("strategy", ""))}</h2><p class="mute">Tracked on paper only '
                    '(WEAK in docs/SECRETS_RESULTS.md). Orders are what the rule would do next session; not advice.</p>'
                    + (f'<p class="bad">STOPPED: {escape(bk["stopped"])}. Exits only.</p>' if bk["stopped"] else "")
-                   + f'<p>Cash Tk {bk["cash"]:,.0f} · Positions: '
+                   + f'<p>Cash Tk {Decimal(str(bk["cash"])):,.0f} · Positions: '
                    + (escape(", ".join(f"{t} {q:,}" for t, q in bk["positions"].items())) or "none")
                    + "<br>Fills today: " + (escape("; ".join(f"{f['side']} {f['ticker']} {f['qty']:,} @ {f['price']}"
                                                          for f in r.get("fills", []))) or "none")

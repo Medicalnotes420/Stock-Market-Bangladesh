@@ -2,7 +2,9 @@ import unittest
 
 import pandas as pd
 
-from dse_quant.limits import limit_pct, lock_flags
+from decimal import Decimal
+
+from dse_quant.limits import limit_pct, lock_flags, snap
 from tests.helpers import bars
 
 
@@ -15,6 +17,20 @@ class Tiers(unittest.TestCase):
 
     def test_nan_prev_close(self):
         self.assertTrue(limit_pct(pd.Series([float("nan")])).isna().all())
+
+
+class Snap(unittest.TestCase):
+    def test_float_noise_at_tick_boundary(self):
+        self.assertEqual(snap(73.10000000000001, True), Decimal("73.1"))
+        self.assertEqual(snap(73.0999999999, False), Decimal("73.1"))
+        self.assertEqual(snap(73.11, True), Decimal("73.2"))
+        self.assertEqual(snap(73.19, False), Decimal("73.1"))
+        self.assertEqual(snap(Decimal("73.10"), True), Decimal("73.10"))
+
+    def test_rejects_non_finite(self):
+        for bad in (float("nan"), float("inf"), Decimal("NaN")):
+            with self.assertRaises(ValueError):
+                snap(bad, True)
 
 
 class Locks(unittest.TestCase):

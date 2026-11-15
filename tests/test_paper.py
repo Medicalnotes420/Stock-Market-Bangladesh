@@ -1,7 +1,9 @@
 import json
 import tempfile
 import unittest
+from decimal import Decimal
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import pandas as pd
@@ -59,14 +61,32 @@ class Harness(unittest.TestCase):
         self.assertTrue(e["regime"].endswith("(no breadth data)"))
 
     def test_dse_weekend_without_bar_is_not_stale(self):
-        sat = self.last + pd.offsets.Week(weekday=5)               # next Saturday: DSE closed, no bar
+        sat = self.last - pd.offsets.Week(weekday=5)  # a Saturday inside the data: no bar, the days before it loaded
         e = daily_run(self.df, self.m, TYPES, sat, **self.paths)
         self.assertFalse(e["gate_open"])
         self.assertIn("dse_weekend", e["gate_reasons"])
         self.assertNotIn("stale_data", e["gate_reasons"])
 
+    def test_closed_day_does_not_hide_a_late_bar(self):
+        sat = self.last + pd.offsets.Week(2, weekday=5)  # a Saturday over a week after the data ends
+        e = daily_run(self.df, self.m, TYPES, sat, **self.paths)
+        self.assertFalse(e["gate_open"])
+        self.assertIn("dse_weekend", e["gate_reasons"])
+        self.assertIn("stale_data", e["gate_reasons"])
+
+    def test_listed_holiday_without_bar_is_not_stale(self):
+        day = self.last + pd.Timedelta(days=7)  # the weekday the stale test below uses, here listed as a holiday
+        with mock.patch("dse_quant.paper.harness.closed_reason", return_value="market_closed"), \
+                mock.patch("dse_quant.paper.harness.expected_session", return_value=self.last.date()):
+            e = daily_run(self.df, self.m, TYPES, day, **self.paths)
+        self.assertFalse(e["gate_open"])
+        self.assertIn("market_closed", e["gate_reasons"])
+        self.assertNotIn("stale_data", e["gate_reasons"])
+
     def test_stale_data_blocks_and_alerts(self):
-        e = daily_run(self.df, self.m, TYPES, self.last + pd.Timedelta(days=7), **self.paths)  # a Tuesday: a DSE session with no data
+        # a Tuesday with no data; pinned as a session because the synthetic dates can land on a real listed holiday
+        with mock.patch("dse_quant.paper.harness.closed_reason", return_value=None):
+            e = daily_run(self.df, self.m, TYPES, self.last + pd.Timedelta(days=7), **self.paths)
         self.assertFalse(e["gate_open"])
         self.assertIn("stale_data", e["gate_reasons"])
         self.assertEqual(e["orders"], [])
@@ -85,6 +105,28 @@ class Harness(unittest.TestCase):
         self.assertTrue(e["kill"])
         self.assertEqual({r["ticker"] for r in e["exit_list"]}, {"T1", "T2"})
         self.assertFalse(e["gate_open"])
+
+    def test_kill_exit_list_has_matured_shares_only(self):
+        held = {"cash": "1000000", "peak_equity": "10000000", "day_start_equity": "1200000",
+                "positions": {"T1": 1000, "T2": 500},
+                "lots": {"T1": {"entry_date": str(self.last.date()), "basis": "30000.00", "lag": 3},
+                         "T2": {"entry_date": "2020-01-02", "basis": "15000.00", "lag": 2}}}
+        self.paths["state_path"].write_text(json.dumps(held))
+        e = daily_run(self.df, self.m, TYPES, self.last, **self.paths)
+        self.assertTrue(e["kill"])
+        self.assertEqual({r["ticker"]: r["qty"] for r in e["exit_list"]}, {"T2": 500})
+
+    def test_state_is_written_as_strings_and_reloads(self):
+        days = self.df.date.unique()[-3:]
+        for d in days:
+            daily_run(self.df, self.m, TYPES, d, strategy="S67", **self.paths)
+        raw = json.loads(self.paths["state_path"].read_text())
+        self.assertIsInstance(raw["cash"], str)
+        self.assertIsInstance(raw["equity"], str)
+        self.assertIsInstance(load_state(self.paths["state_path"])["cash"], Decimal)
+        e = daily_run(self.df, self.m, TYPES, days[-1], strategy="S67", **self.paths)   # same-day rerun on string state
+        self.assertEqual(e["alerts"], [])
+        self.assertEqual(summarize(self.paths["journal_path"])["runs"], 4)
 
     def check_bad_state(self, text):
         self.paths["state_path"].write_text(text)
@@ -134,6 +176,62 @@ class Harness(unittest.TestCase):
         for _ in range(2):  # -3% vs yesterday's close, on both runs
             e = daily_run(self.df, self.m, TYPES, self.last, **self.paths)
             self.assertIn("max_daily_loss", e["gate_reasons"])
+
+    def test_strategy_run_sells_a_hand_entered_position_without_a_lot(self):
+        prev = str(self.df.date.unique()[-2].date())
+        self.paths["state_path"].write_text(json.dumps(
+            {"asof": prev, "equity": 1e7, "day_start_equity": 1e7, "cash": 1e7 - 30_000, "peak_equity": 1e7,
+             "positions": {"T1": 1000}, "pending_sells": ["T1"]}))    # no "lots": made in no-strategy mode
+        e = daily_run(self.df, self.m, TYPES, self.last, strategy="S67", **self.paths)
+        self.assertEqual(e["alerts"], [])
+        self.assertIn(("SELL", "T1"), [(f["side"], f["ticker"]) for f in e["fills"]])
+
+    def test_rerun_with_the_bar_fills_after_a_stale_first_run(self):
+        prev = str(self.df.date.unique()[-2].date())
+        self.paths["state_path"].write_text(json.dumps(
+            {"asof": prev, "bar_asof": prev, "equity": 1e7, "day_start_equity": 1e7, "cash": 1e7,
+             "peak_equity": 1e7, "positions": {}, "pending_buys": {"T2": 100}}))
+        daily_run(self.df[self.df.date < self.last], self.m, TYPES, self.last, strategy="S67", **self.paths)
+        st = json.loads(self.paths["state_path"].read_text())
+        self.assertEqual(st["positions"], {})   # bar not loaded: no fill
+        self.assertEqual((st["asof"], st["bar_asof"]), (str(self.last.date()), prev))
+        e = daily_run(self.df, self.m, TYPES, self.last, strategy="S67", **self.paths)
+        self.assertEqual([(f["side"], f["ticker"]) for f in e["fills"]], [("BUY", "T2")])
+        self.assertEqual(json.loads(self.paths["state_path"].read_text())["bar_asof"], str(self.last.date()))
+
+    def test_backfilled_lot_uses_the_settlement_lag_of_its_category(self):
+        prev = str(self.df.date.unique()[-2].date())
+        for cat, lag in (("Z", 3), ("A", 2)):
+            with self.subTest(cat=cat):
+                self.paths["state_path"].write_text(json.dumps(
+                    {"asof": prev, "equity": 1e7, "day_start_equity": 1e7, "cash": 1e7 - 30_000, "peak_equity": 1e7,
+                     "positions": {"T1": 1000}, "pending_sells": ["T1"]}))
+                daily_run(self.df, self.m, TYPES, self.last, strategy="S67", categories={"T1": cat}, **self.paths)
+                rows = json.loads(self.paths["state_path"].read_text())["unsettled_cash"]
+                self.assertEqual([(r[0], r[2]) for r in rows], [(str(self.last.date()), lag)])
+
+    def test_position_missing_from_the_data_does_not_break_the_decision(self):
+        prev = str(self.df.date.unique()[-2].date())
+        self.paths["state_path"].write_text(json.dumps(
+            {"asof": prev, "equity": 1e7, "day_start_equity": 1e7, "cash": 1e7 - 30_000, "peak_equity": 1e7,
+             "positions": {"T1": 1000, "NOPE": 5}, "pending_sells": ["T1"]}))
+        e = daily_run(self.df, self.m, TYPES, self.last, strategy="S67", **self.paths)
+        self.assertEqual(e["alerts"], ["no price for held share NOPE: valued at 0"])   # loud, but no state error
+        self.assertIn(e["regime"].split()[0], ("RISK_ON", "NEUTRAL"))   # else decide() never reaches Portfolio(...)
+        self.assertEqual(json.loads(self.paths["state_path"].read_text())["asof"], str(self.last.date()))
+
+    def test_stale_rerun_of_the_same_day_keeps_the_bar_equity(self):
+        prev = str(self.df.date.unique()[-2].date())
+        self.paths["state_path"].write_text(json.dumps(
+            {"asof": prev, "equity": 1e7, "day_start_equity": 1e7, "cash": 1e7 - 30_000, "peak_equity": 1,
+             "positions": {"T1": 1000}}))
+        daily_run(self.df, self.m, TYPES, self.last, strategy="S67", **self.paths)
+        s1 = json.loads(self.paths["state_path"].read_text())
+        daily_run(self.df[self.df.date < self.last], self.m, TYPES, self.last, strategy="S67", **self.paths)
+        s2 = json.loads(self.paths["state_path"].read_text())
+        self.assertEqual(s2["asof"], str(self.last.date()))
+        for k in ("equity", "peak_equity", "day_start_equity"):
+            self.assertEqual(s2[k], s1[k], k)
 
     def test_input_error_day_does_not_move_state(self):
         text = json.dumps({"asof": "2020-01-01", "equity": 1e7, "day_start_equity": 1e7, "cash": 1e6,

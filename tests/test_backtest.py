@@ -4,7 +4,9 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from dse_quant.backtest.costs import cost_rate
+from decimal import Decimal
+
+from dse_quant.backtest.costs import buy_fill, cost_amount, cost_rate
 from dse_quant.backtest.engine import Config, run
 from dse_quant.backtest.metrics import deflated_sharpe, first_breach, max_drawdown, sharpe, trade_stats
 from dse_quant.backtest.walkforward import stitch, switch_cost
@@ -21,20 +23,27 @@ def clean(df):
 
 class Costs(unittest.TestCase):
     def test_floor_slippage(self):
-        self.assertAlmostEqual(cost_rate(1_000, 1e12, 0.02), 0.0047 + 0.001)
+        self.assertAlmostEqual(float(cost_rate(1_000, 1e12, 0.02)), 0.0030 + 0.001)
 
     def test_impact_scales_with_vol_and_sqrt(self):
         # Tk 10 lakh vs Tk 5 crore ADTV, 2.5% daily vol -> 0.025 * sqrt(0.02) = 0.354%
-        self.assertAlmostEqual(cost_rate(1e6, 5e7, 0.025), 0.0047 + 0.025 * math.sqrt(0.02))
+        self.assertAlmostEqual(float(cost_rate(1e6, 5e7, 0.025)), 0.0030 + 0.025 * math.sqrt(0.02))
 
     def test_impact_capped_so_a_sale_never_costs_more_than_it_raises(self):
-        self.assertAlmostEqual(cost_rate(1e6, 5e4, 0.05), 0.0047 + 0.10)         # 20x ADTV, 5% vol
-        self.assertAlmostEqual(cost_rate(1e6, 0, 0.02), 0.0047 + 0.10)           # no turnover after a suspension
-        self.assertAlmostEqual(cost_rate(1e6, 5e7, float("nan")), 0.0047 + 0.10)  # no vol history
-        self.assertLess(cost_rate(1e9, 1, 1.0, mult=2.0), 1.0)
+        self.assertAlmostEqual(float(cost_rate(1e6, 5e4, 0.05)), 0.0030 + 0.10)         # 20x ADTV, 5% vol
+        self.assertAlmostEqual(float(cost_rate(1e6, 0, 0.02)), 0.0030 + 0.10)           # no turnover after a suspension
+        self.assertAlmostEqual(float(cost_rate(1e6, 5e7, float("nan"))), 0.0030 + 0.10)  # no vol history
+        self.assertLess(float(cost_rate(1e9, 1, 1.0, mult=2.0)), 1.0)
 
     def test_multiplier(self):
-        self.assertAlmostEqual(cost_rate(1_000, 1e12, 0.02, mult=2), 2 * (0.0047 + 0.001))
+        self.assertAlmostEqual(float(cost_rate(1_000, 1e12, 0.02, mult=2)), 2 * (0.0030 + 0.001))
+
+    def test_cost_is_rounded_up_to_the_paisa(self):
+        self.assertEqual(cost_amount(Decimal("1001"), 1e12, 0.0), Decimal("4.01"))  # 0.4% of 1001 = 4.004
+
+    def test_buy_never_exceeds_settled_cash(self):
+        q, total = buy_fill(1000, Decimal("10.1"), 1e12, 0.0, 1.0, Decimal("1014.00"))
+        self.assertEqual((q, total), (99, Decimal("1003.90")))  # 100 shares would cost 1014.04
 
 
 class Metrics(unittest.TestCase):
@@ -82,7 +91,7 @@ class WalkForward(unittest.TestCase):
         self.assertTrue((out == 0.01).all())
 
     def test_switch_cost_scales(self):
-        self.assertAlmostEqual(switch_cost(1.5), 2 * 1.5 * (0.0047 + 0.001))
+        self.assertAlmostEqual(switch_cost(1.5), 2 * 1.5 * (0.0030 + 0.001))
 
 
 class PanelUniverseMatchesReference(unittest.TestCase):
@@ -139,12 +148,25 @@ class Engine(unittest.TestCase):
         self.assertAlmostEqual(first.pnl, 5000 * (14 - 10))
         self.assertAlmostEqual(res.equity.iloc[-1], 1e6 + 20000)
 
+    def test_sale_proceeds_stay_unsettled_but_count_in_equity(self):
+        p, elig = one_stock([10.0, 10.0, 11.0, 12.0, 13.0, 14.0])
+        p.atr.iloc[:, :] = 1.0
+        res = run(p, AlwaysBuy(), self.cfg(), elig=elig)         # sells t5; proceeds clear at t7, after the run
+        self.assertAlmostEqual(res.cash.iloc[-1], 1e6 - 5000 * 10)
+        self.assertAlmostEqual(res.equity.iloc[-1], 1e6 + 20000)
+
+    def test_fills_snap_to_tick_buy_up_sell_down(self):
+        p, elig = one_stock([10.05] * 7)
+        p.atr.iloc[:, :] = 1.0
+        res = run(p, AlwaysBuy(), self.cfg(), elig=elig)
+        self.assertAlmostEqual(res.trades.iloc[0].pnl, 5000 * (10.0 - 10.1))
+
     def test_costs_charged_both_sides(self):
         closes = [10.0] * 7
         p, elig = one_stock(closes)
         p.atr.iloc[:, :] = 1.0
         res = run(p, AlwaysBuy(), self.cfg(cost_mult=1.0), elig=elig)
-        rate = cost_rate(50_000, 1e10, 0.0)      # flat prices -> zero volatility -> spread floor
+        rate = float(cost_rate(50_000, 1e10, 0.0))      # flat prices -> zero volatility -> spread floor
         t = res.trades.iloc[0]
         self.assertAlmostEqual(t.pnl, 5000 * 10 * (1 - rate) - 5000 * 10 * (1 + rate), places=6)
 

@@ -2,6 +2,7 @@
 
 Descriptive only: trend, indicators and rule alerts on the data given. Not investment advice."""
 import json
+import math
 import re
 import urllib.parse
 import urllib.request
@@ -517,6 +518,77 @@ def _svg(lines, h, lo=None, hi=None, guides=(), label=""):
             f'{g}{body}</svg>')
 
 
+def _hbars(rows, fmt, signed=False):
+    """Horizontal bars in HTML so the text stays crisp. rows: [(label, value)]; missing values are skipped.
+    signed: bars grow left or right of a zero line, otherwise from the left edge."""
+    rows = [(k, v) for k, v in rows if v is not None and not np.isnan(v)]
+    if not rows:
+        return ""
+    m = max(max(abs(v) for _, v in rows), 1e-9)
+    out = []
+    for k, v in rows:
+        w = abs(v) / m * (50 if signed else 100)
+        left = (50 - w if v < 0 else 50) if signed else 0
+        zero = '<i class="zero"></i>' if signed else ""
+        out.append(f'<div class="hb"><span>{escape(str(k))}</span><span class="ht">{zero}'
+                   f'<i class="hbar {"pos" if v >= 0 else "neg"}" style="left:{left:.1f}%;width:{w:.1f}%"></i></span>'
+                   f'<span>{fmt(v)}</span></div>')
+    return "".join(out)
+
+
+def _pie(parts, label):
+    """Pie with a direct-label legend. Slices take palette slots 1..n in order (adjacent pairs validated)."""
+    parts = [(n, v) for n, v in parts if v and v > 0]
+    tot = sum(v for _, v in parts)
+    if not parts or tot <= 0:
+        return ""
+    paths, lg, ang = [], [], -math.pi / 2
+    for i, (n, v) in enumerate(parts):
+        col = f"var(--p{i + 1})"
+        if len(parts) == 1:
+            paths.append(f'<circle cx="50" cy="50" r="48" style="fill:{col}"/>')
+        else:
+            a2 = ang + v / tot * 2 * math.pi
+            x1, y1 = 50 + 48 * math.cos(ang), 50 + 48 * math.sin(ang)
+            x2, y2 = 50 + 48 * math.cos(a2), 50 + 48 * math.sin(a2)
+            paths.append(f'<path d="M50,50 L{x1:.2f},{y1:.2f} A48,48 0 {int(v / tot > .5)} 1 {x2:.2f},{y2:.2f} Z" '
+                         f'style="fill:{col}"/>')
+            ang = a2
+        lg.append(f'<li><i class="sw" style="background:{col}"></i>{escape(n)} <b>{v:.2f}%</b></li>')
+    return (f'<div class="pierow"><svg class="pie" viewBox="0 0 100 100" role="img" aria-label="{escape(label)}">'
+            f'{"".join(paths)}</svg><ul class="lg">{"".join(lg)}</ul></div>')
+
+
+def _sector_bars(rows):
+    """Where the share sits in its sector: left = lowest value, right = highest; the dot is this share."""
+    if not rows:
+        return ""
+    body = "".join(f'<div class="hb"><span>{escape(k)}</span><span class="ht"><i class="mid"></i>'
+                   f'<i class="dot" style="left:{p:.1%}"></i></span><span class="mute">rank {v["rank"]} of {v["n"]}</span></div>'
+                   for k, p, v in rows)
+    return ('<div class="chart"><p class="mute">Left = lowest value in the sector, right = highest. Dot = this share.</p>'
+            + body + '</div>')
+
+
+def _chg_bars(a):
+    body = _hbars(list((a.get("change") or {}).items()), lambda v: f"{v:+.1%}", signed=True)
+    return f'<h3>Price change</h3><div class="chart">{body}</div>' if body else ""
+
+
+def _tally_bars(t):
+    """Bullish / neutral / bearish counts behind each tally, as 100%-stacked bars."""
+    out = ""
+    for nm, k in (("Overall", "overall"), ("Moving averages", "ma_tally"), ("Oscillators", "osc_tally")):
+        x = t[k]
+        segs = (("bullish", x["bullish"], "pos"), ("neutral", x["neutral"], "neu"), ("bearish", x["bearish"], "neg"))
+        bar = "".join(f'<span class="{c}" style="flex:{n}" title="{lab}: {n}"></span>' for lab, n, c in segs if n)
+        out += (f'<div class="hb"><span>{nm}</span><span class="st">{bar}</span>'
+                f'<span class="mute">{x["bullish"]} / {x["neutral"]} / {x["bearish"]}</span></div>')
+    return ('<div class="chart"><p class="mute"><i class="sw" style="background:var(--pos)"></i>bullish '
+            '<i class="sw" style="background:var(--grey)"></i>neutral <i class="sw" style="background:var(--neg)"></i>'
+            'bearish &middot; counts bullish / neutral / bearish</p>' + out + '</div>')
+
+
 def _section(sym, a):
     s = a["series"]
     pct = lambda v: f'<span class="{"ok" if v >= 0 else "bad"}">{v:+.1%}</span>'
@@ -554,7 +626,7 @@ def _section(sym, a):
             f'<br>Volume {a["volume"]:,.0f} vs 20-day average {a["vol_avg20"]:,.0f}'
             + (f' ({a["volume"] / a["vol_avg20"]:.1f}x)' if a["vol_avg20"] > 0 else '')
             + (f'<br>52-week range Tk {a["low52"]:,.2f} &ndash; {a["high52"]:,.2f}' if "high52" in a else '') + '</p>'
-            + _fund(a) +
+            + _chg_bars(a) + _fund(a) +
             f'<p class="mute legend"><i class="k c"></i>Close <i class="k a"></i>SMA20 <i class="k b"></i>SMA50 '
             f'<i class="k bb"></i>Bollinger bands · last {len(s)} sessions</p>'
             + _svg([(s.bb_up, "bb"), (s.bb_lo, "bb"), (s.sma50, "b"), (s.sma20, "a"), (s.close, "c")], 260,
@@ -591,7 +663,7 @@ def _tech(a):
                   for o in t["osc"])
     pv = "".join(f'<th>{k}</th>' for k in t["pivots"]), "".join(f'<td>{v:,.2f}</td>' for v in t["pivots"].values())
     return (f'<h3>Technical summary</h3><p>Overall: {tl(t["overall"])}<br>Moving averages: {tl(t["ma_tally"])}<br>'
-            f'Oscillators: {tl(t["osc_tally"])}</p>'
+            f'Oscillators: {tl(t["osc_tally"])}</p>{_tally_bars(t)}'
             f'<div class="wrap"><table><tr><th>Moving average</th><th>Simple</th><th>Exponential</th></tr>{ma}</table></div>'
             f'<div class="wrap"><table><tr><th>Oscillator</th><th>Value</th><th>Reading</th></tr>{osc}</table></div>'
             f'<p class="mute">Classic pivot points from the last session (Tk):</p>'
@@ -642,7 +714,9 @@ def _fund(a):
     hold = "".join(f'<tr><td>{escape(str(h.get("date", "")))}</td>'
                    + "".join(f'<td>{_f(_num(h["pattern"].get(n)), "{:.2f}%")}</td>' for n in names) + '</tr>'
                    for h in f["holders"])
-    hold = ('<h3>Shareholding</h3><div class="wrap"><table><tr><th>As of</th>'
+    hold = ('<h3>Shareholding</h3>' + _pie([(n.title(), _num(f["holders"][-1]["pattern"].get(n))) for n in names],
+                                          "Latest shareholding split")
+            + '<div class="wrap"><table><tr><th>As of</th>'
             + "".join(f'<th>{n.title()}</th>' for n in names) + f'</tr>{hold}</table></div>') if hold else ""
     hold += "".join(f'<p class="bad">⚑ {escape(x)}</p>' for x in f.get("owner_flags", []))
     sc = f.get("sector_cmp")
@@ -653,19 +727,25 @@ def _fund(a):
         cmp_rows = "".join(f'<tr><td>{lab[k][0]}</td><td>{_f(v["share"], lab[k][1])}</td><td>{_f(v["median"], lab[k][1])}</td>'
                            f'<td>{_f(v["rank"], "{:d}", "&ndash;")} of {v["n"]} <span class="mute">(1 = {lab[k][2]})</span></td></tr>'
                            for k, v in sc["metrics"].items())
+        pos_rows = [(lab[k][0], ((v["rank"] - 1) / (v["n"] - 1) if lab[k][2] == "lowest"
+                                 else (v["n"] - v["rank"]) / (v["n"] - 1)), v)
+                    for k, v in sc["metrics"].items() if v.get("rank") and v.get("n", 0) > 1]
         hold = (f'<h3>Against its sector <span class="mute">· {escape(str(sc["sector"]))}, {sc["members"]} shares</span></h3>'
                 f'<div class="wrap"><table><tr><th>Measure</th><th>This share</th><th>Sector median</th><th>Rank</th></tr>'
                 f'{cmp_rows}</table></div><p class="mute">From the weekly snapshot of every DSE company page taken '
                 f'{escape(str(sc["day"]))}, each at its own price that day. Loss-makers have no P/E and are left out of '
-                'that row.</p>') + hold
+                'that row.</p>') + _sector_bars(pos_rows) + hold
     elif isinstance(sc, str):
         hold = f'<p class="mute">Sector comparison: {escape(sc)}</p>' + hold
     aud = f.get("auditor") or []
     hold += ('<p>Auditor\'s report(s) saved for reading: ' + "; ".join(escape(p) for p in aud) + '</p>') if aud else ""
+    eps = [(str(y["year"]), y["eps"]) for y in reversed(f["years"])]
+    eps_html = (f'<h3>EPS by year (Tk)</h3><div class="chart">{_hbars(eps, lambda v: f"{v:+.2f}", signed=True)}</div>'
+                if any(v is not None for _, v in eps) else "")
     return (f'<h3>Fundamentals <span class="mute">· {escape(str(f["name"] or ""))}</span></h3>'
             f'<div class="wrap"><table>{rows}</table></div>'
             f'<h3>Year by year</h3><div class="wrap"><table><tr><th>Year</th><th>EPS</th><th>NAV</th>'
-            f'<th>Profit (Tk mn)</th><th>P/E then</th><th>Dividend</th></tr>{yrs}</table></div>{inter}{hold}'
+            f'<th>Profit (Tk mn)</th><th>P/E then</th><th>Dividend</th></tr>{yrs}</table></div>{eps_html}{inter}{hold}'
             f'<p class="mute">From the dse.com.bd company page, as of {escape(str(f["as_of"]))}. P/E, Price/NAV and '
             'yield use the last close above. Money in Tk mn as DSE reports it. Loans / equity is approximate (equity = '
             'NAV &times; shares). Context only: fundamentals were not tested as a price forecast here.</p>')
@@ -724,9 +804,8 @@ def _news(a, n=6):
 
 PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>DSE Share Watch</title><style>
-:root{{--bg:#fff;--fg:#1a1a1a;--mute:#666;--line:#ddd;--ok:#1a7f37;--bad:#c62828;--c:#1a1a1a;--a:#1f6feb;--b:#d97706;--bb:#999}}
-@media (prefers-color-scheme:dark){{:root{{--bg:#16181c;--fg:#e8e8e8;--mute:#999;--line:#333;--ok:#4caf6a;--bad:#ef6b6b;--c:#e8e8e8;--a:#58a6ff;--b:#f0a542;--bb:#666}}}}
-body{{background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif;margin:0 auto;max-width:960px;padding:16px}}
+:root{{color-scheme:light;--bg:#fff;--fg:#47484f;--mute:#696969;--line:#e3e3e3;--ok:#3c763d;--bad:#a94442;--c:#47484f;--a:#337ab7;--b:#d97706;--bb:#999;--p1:#2a78d6;--p2:#eb6834;--p3:#1baf7a;--p4:#eda100;--p5:#e87ba4;--pos:#2a78d6;--neg:#e34948;--grey:#898781}}
+body{{background:var(--bg);color:var(--fg);font:14px/1.5 "Helvetica Neue",Helvetica,Arial,sans-serif;margin:0 auto;max-width:960px;padding:16px}}
 h1{{font-size:20px;margin:0 0 4px}}h2{{font-size:18px;margin:28px 0 4px}}h3{{font-size:15px;margin:16px 0 4px}}.mute{{color:var(--mute)}}.ok{{color:var(--ok)}}.bad{{color:var(--bad)}}
 svg{{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:6px;margin:2px 0 6px}}
 polyline{{fill:none;stroke-width:1.5;vector-effect:non-scaling-stroke}}.c polyline{{stroke:var(--c)}}.a polyline{{stroke:var(--a)}}
@@ -735,11 +814,29 @@ polyline{{fill:none;stroke-width:1.5;vector-effect:non-scaling-stroke}}.c polyli
 .k.c{{background:var(--c)}}.k.a{{background:var(--a)}}.k.b{{background:var(--b)}}.k.bb{{background:var(--bb)}}
 .wrap{{overflow-x:auto}}table{{border-collapse:collapse;width:100%}}td,th{{border-bottom:1px solid var(--line);padding:6px;text-align:left;white-space:nowrap}}
 tr.fired td{{font-weight:600}}footer{{margin-top:32px;font-size:13px}}
-</style></head><body><h1>DSE share watch</h1><p class="mute">{note}</p>{errors}{sections}
-<h2>About the My Secret Series rules</h2><p class="mute">Flags restate the author's rules (docs/SECRETS_LEARNINGS.md).
+:root{{--p1:#2a78d6;--p2:#eb6834;--p3:#1baf7a;--p4:#eda100;--p5:#e87ba4;--pos:#2a78d6;--neg:#e34948;--grey:#898781}}
+.chart{{margin:6px 0 10px}}.chart p{{margin:0 0 4px;font-size:13px}}
+.hb{{display:grid;grid-template-columns:minmax(0,38%) minmax(0,1fr) auto;gap:8px;align-items:center;margin:4px 0;font-size:13px}}
+.ht{{position:relative;height:14px;min-width:0}}
+.hbar{{position:absolute;top:0;height:14px;border-radius:3px}}.hbar.pos,.st .pos{{background:var(--pos)}}.hbar.neg,.st .neg{{background:var(--neg)}}.st .neu{{background:var(--grey)}}
+.zero{{position:absolute;left:50%;top:-2px;bottom:-2px;border-left:1px solid var(--mute)}}
+.mid{{position:absolute;left:50%;top:0;bottom:0;border-left:1px solid var(--line)}}
+.dot{{position:absolute;top:2px;width:10px;height:10px;margin-left:-5px;border-radius:50%;background:var(--p1);border:2px solid var(--bg)}}
+.st{{display:flex;height:14px;border-radius:3px;overflow:hidden;min-width:0}}.st span{{height:100%;border-right:2px solid var(--bg)}}.st span:last-child{{border-right:0}}
+.pierow{{display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin:6px 0}}
+svg.pie{{width:170px;height:170px;border:0;margin:0;flex:none}}svg.pie path,svg.pie circle{{stroke:var(--bg);stroke-width:1.5}}
+.lg{{list-style:none;padding:0;margin:0;font-size:13px}}.lg li{{margin:3px 0}}
+.sw{{display:inline-block;width:12px;height:12px;border-radius:2px;margin-right:6px;vertical-align:-1px}}
+header.top{{border-bottom:1px solid var(--line);margin-bottom:6px;padding-bottom:8px}}header.top h1{{font-size:22px;font-weight:700}}
+section{{background:var(--bg);border:1px solid #337ab7;border-radius:4px;box-shadow:0 1px 1px rgba(0,0,0,.05);margin:20px 0;padding:0 0 15px;overflow:hidden}}
+section>h2{{background:#337ab7;color:#fff;margin:0 0 12px;padding:10px 15px;font-size:16px;font-weight:700}}
+section>h2 .mute{{color:#d9e6f5}}section>:not(h2){{margin-left:15px;margin-right:15px}}
+th{{background:#f5f5f5}}
+</style></head><body><header class="top"><h1>DSE share watch</h1><p class="mute">{note}</p></header>{errors}{sections}
+<section><h2>About the My Secret Series rules</h2><p class="mute">Flags restate the author's rules (docs/SECRETS_LEARNINGS.md).
 Tested on DSE data 2014 to Nov 2026 (docs/SECRETS_RESULTS.md, docs/SECRETS_FORECAST_RESULTS.md): no buy rule
 forecast a rise, every rule lost money when traded on fresh 2026 data, one sell warning (#2) has a small edge and
-#31 works in reverse. Use the flags as information, not forecasts. {regime}</p>
+#31 works in reverse. Use the flags as information, not forecasts. {regime}</p></section>
 <footer class="mute">Descriptive analysis of the uploaded data only. Not investment advice.</footer></body></html>"""
 
 

@@ -1,4 +1,5 @@
 import unittest
+from decimal import Decimal
 
 import pandas as pd
 
@@ -49,6 +50,14 @@ class TestPlan(unittest.TestCase):
         self.assertEqual(p["wanted"], 2_000)
         self.assertEqual(p["shares"], 100)  # 10% of 100,000 at Tk 100
         self.assertIn("max_position_pct", p["capped_by"])
+
+    def test_outputs_are_tick_validated_decimals(self):
+        p = plan(frame(self.WIDE), "X", equity=100_000, entry=100.04, stop=96.96, max_loss=6_000)
+        self.assertEqual((p["entry"], p["stop"]), (Decimal("100.1"), Decimal("96.9")))
+        for k in ("entry", "stop", "target", "value", "loss_at_stop", "max_loss"):
+            self.assertIsInstance(p[k], Decimal)
+        for k in ("entry", "stop", "target"):
+            self.assertEqual(p[k] % Decimal("0.1"), 0)
 
     def test_bad_stops_rejected(self):
         for stop in (101, 99.5):  # above the entry; too close for ~0.57% costs each way

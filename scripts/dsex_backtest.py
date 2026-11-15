@@ -56,10 +56,10 @@ if __name__ == "__main__":
     # shortcut: daily membership changes are not charged; only switches in and out of the basket pay
     per = ORDER / N_NAMES
     a, v = p.adtv.shift(1).where(member), p.vol.shift(1).where(member)
-    cost = np.array([np.nanmean([cost_rate(per, x, y) for x, y in zip(a.values[s], v.values[s])
+    cost = np.array([np.nanmean([float(cost_rate(per, x, y)) for x, y in zip(a.values[s], v.values[s])
                                  if np.isfinite(x)]) if member.values[s].any() else np.nan
                      for s in range(len(p.dates))])
-    cost = np.nan_to_num(cost, nan=cost_rate(per, 0, np.nan))
+    cost = np.nan_to_num(cost, nan=float(cost_rate(per, 0, np.nan)))
     floor = np.zeros(len(p.dates), bool)
     for x, y in FLOOR:
         floor |= (p.dates >= x) & (p.dates <= y)
