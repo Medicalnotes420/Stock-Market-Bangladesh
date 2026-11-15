@@ -457,9 +457,9 @@ count as the pattern.
 
 Synthetic bar sequences are built in the test code.
 
-"Run in CI" means "able to": today `.github/workflows` runs only the two root risk-guard tests and
-installs only pytest. Running `tests/test_chart_*.py` there needs a workflow change, which is not part of
-this design.
+CI runs them (settled 2026-11-15): the `chart-tests` job in `.github/workflows/tests.yml` installs
+`requirements.txt` on Python 3.15 and runs `tests/test_chart_*.py`. `data/` is not in the repo, so the
+real-data tests skip there (8 skipped, 156 passed from a clean checkout) and stay a local gate (7.3).
 
 - **Bars**: text to `Decimal` with no float step; quantization of long adjusted values; a truncated gzip
   raises.
