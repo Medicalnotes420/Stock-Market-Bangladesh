@@ -3,6 +3,7 @@ import unittest
 from dataclasses import replace
 from datetime import date, timedelta
 from decimal import Decimal
+from unittest import mock
 
 from chartapp import bars as B, runner as R
 from chartapp.bars import Bar
@@ -214,6 +215,18 @@ class TrendlineBreak(unittest.TestCase):
         self.assertEqual(self.fires(closes), [5, 10])
         self.assertEqual([(p.date, p.price) for p in trendline_break.detect(bars, self.CFG).points],
                          [(bars[3].date, Decimal("112")), (bars[8].date, Decimal("92"))])
+
+    def test_bullish_is_reported_when_both_lines_break_on_one_bar(self):
+        # Lows 100 (bar 1) and 110 (bar 3): support rises 5 a bar, 120 at bar 5, edge 118.8.
+        # Highs 200 (bar 2) and 130 (bar 4): resistance falls 35 a bar, 95 at bar 5, edge 95.95.
+        # The lines have crossed, so 118 at bar 5 (which also confirms the high at 4) is beyond both.
+        closes = ["150", "100", "200", "110", "130", "118"]
+        self.assertEqual(self.fires(closes), [5])
+        self.assertEqual(trendline_break.detect(series(closes), self.CFG).direction, "bullish")
+        # the bearish break is real too: with the order of the sides swapped, the same bar reports it
+        with mock.patch.object(trendline_break, "_SIDES", trendline_break._SIDES[::-1]):
+            self.assertEqual(self.fires(closes), [5])
+            self.assertEqual(trendline_break.detect(series(closes), self.CFG).direction, "bearish")
 
     def test_no_signal_before_the_second_pivot_is_confirmed(self):
         # 113 is far over where the line would be, but the high at bar 3 has not reversed yet
