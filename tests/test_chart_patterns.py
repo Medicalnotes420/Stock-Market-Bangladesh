@@ -72,6 +72,12 @@ class EveryPlugin(unittest.TestCase):
             for name, cfg in CONFIG.items():
                 found = R.run(PLUGINS[name], cfg, ticker, B.rows(ticker), R.ex_dates(R.ACTIONS).get(ticker, ()))
                 self.assertGreater(len(found), 0, (ticker, name))  # run() raises on any contract breach
+                # the market scan's shortcut: the same plugin on a tail of the history, recent bars only
+                since = found[len(found) // 2].signal_date
+                tail = B.tail(ticker, since, PLUGINS[name].LOOKBACK - 1)
+                self.assertLess(len(tail), len(B.rows(ticker)), (ticker, name))
+                self.assertEqual(R.run(PLUGINS[name], cfg, ticker, tail, R.ex_dates(R.ACTIONS).get(ticker, ()), since),
+                                 [s for s in found if s.signal_date >= since], (ticker, name))
 
 
 class SwingBreakout(unittest.TestCase):

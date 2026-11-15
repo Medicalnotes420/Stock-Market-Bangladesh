@@ -95,6 +95,27 @@ class Load(unittest.TestCase):
             with self.assertRaises(ValueError):
                 B.rows("AAA", self.write(lines, name))
 
+    def test_tail_is_the_end_of_rows(self):
+        p = self.write(GOOD)
+        full = B.rows("AAA", p)
+        for since, before, want in ((date(2026, 11, 8), 0, full[1:]), (date(2026, 11, 8), 1, full),
+                                    (date(2026, 11, 8), 50, full),      # more look-back than there is history
+                                    (date(2026, 11, 6), 0, full[1:]),   # `since` is not a bar
+                                    (date(2026, 11, 5), 0, full), (date(2020, 1, 1), 0, full),
+                                    (date(2026, 11, 9), 0, ()), (date(2026, 11, 9), 5, ())):  # nothing recent
+            self.assertEqual(B.tail("AAA", since, before, p), want, (since, before))
+        with self.assertRaises(KeyError):
+            B.tail("NOPE", date(2026, 11, 8), 0, p)
+        with self.assertRaises(ValueError):
+            B.tail("AAA", date(2026, 11, 8), -1, p)
+
+    def test_tail_checks_the_order_of_the_whole_ticker(self):
+        # the bad order is in front of the rows that would be converted; rows() refuses this file too
+        old = GOOD[0].replace("2026-11-05", "2026-11-09")
+        for name, lines in (("rev.csv.gz", [old, GOOD[0], GOOD[1]]), ("dup.csv.gz", [GOOD[0], GOOD[0], GOOD[1]])):
+            with self.assertRaises(ValueError, msg=name):
+                B.tail("AAA", date(2026, 11, 8), 0, self.write(lines, name))
+
     def test_truncated_gzip_fails(self):
         p = self.write(GOOD * 200)
         data = p.read_bytes()

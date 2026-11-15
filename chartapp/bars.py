@@ -1,6 +1,7 @@
 """Read data/clean/prices.csv.gz as text and hand out Decimal bars (docs/design/eod-chart-app.md 4.1).
 
 pandas is only a string-table reader here: every cell stays `str` until it becomes Decimal, int, bool or date."""
+from bisect import bisect_left
 from dataclasses import dataclass
 from datetime import date
 from decimal import ROUND_HALF_EVEN, Decimal
@@ -80,16 +81,35 @@ def rows(ticker: str, path: Path = PRICES) -> tuple[Row, ...]:
     return _rows(ticker, path)
 
 
-@lru_cache(maxsize=64)  # bounded: all 533 tickers as Rows would be about 1.2M objects
-def _rows(ticker: str, path: Path) -> tuple[Row, ...]:
-    out = tuple(
+def _convert(frame: pd.DataFrame) -> tuple[Row, ...]:
+    return tuple(
         Row(date.fromisoformat(r.date), dec(r.open), dec(r.high), dec(r.low), dec(r.close), whole(r.volume),
             dec(r.value), dec(r.close_raw), dec(r.adj_factor), _BOOL[r.gap_flag], _BOOL[r.lower_lock],
             _BOOL[r.upper_lock])
-        for r in table(path)[ticker].itertuples(index=False))
+        for r in frame.itertuples(index=False))
+
+
+@lru_cache(maxsize=64)  # bounded: all 533 tickers as Rows would be about 1.2M objects
+def _rows(ticker: str, path: Path) -> tuple[Row, ...]:
+    out = _convert(table(path)[ticker])
     if any(a.date >= b.date for a, b in zip(out, out[1:])):
         raise ValueError(f"{ticker}: dates are not strictly increasing")
     return out
+
+
+def tail(ticker: str, since: date, before: int, path: Path = PRICES) -> tuple[Row, ...]:
+    """The ticker's rows dated `since` or later, with up to `before` rows ahead of them: the same Rows
+    rows() gives, without converting the years in front. Empty if nothing is dated `since` or later.
+    For the market scan, where converting every ticker's full history costs about 40 s."""
+    if before < 0:
+        raise ValueError(f"before must not be negative, got {before}")
+    g = table(path)[ticker]
+    days = g.date.tolist()
+    # ISO dates sort as text. Checked over the whole ticker, as rows() does: the count below trusts the order
+    if any(a >= b for a, b in zip(days, days[1:])):
+        raise ValueError(f"{ticker}: dates are not strictly increasing")
+    n = len(days) - bisect_left(days, since.isoformat())
+    return _convert(g.iloc[-(n + before):]) if n else ()  # n first: iloc[-0:] would be the whole frame
 
 
 def bars(rs: tuple[Row, ...]) -> tuple[Bar, ...]:

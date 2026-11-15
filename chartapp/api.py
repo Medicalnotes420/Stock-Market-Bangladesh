@@ -86,6 +86,12 @@ class SignalOut(BaseModel):
     note: str
 
 
+class ScanOut(BaseModel):
+    since: date
+    sessions: int
+    signals: list[SignalOut]
+
+
 def sessions_behind(last: date, expected: date) -> int:
     """DSE sessions after `last` up to and including `expected`."""
     return sum(closed_reason(last + timedelta(days=n)) is None for n in range(1, (expected - last).days + 1))
@@ -124,6 +130,7 @@ def create_app(path: Path = B.PRICES, config: Path = R.CONFIG, actions: Path | N
     actions = actions or path.with_name("actions.csv")  # build_clean writes it next to the prices
     index: dict[str, TickerOut] = {}
     plugins, configs, ex = {}, {}, {}
+    days: list[str] = []  # every date in the file, oldest first: the market's sessions as the data has them
 
     @asynccontextmanager
     async def lifespan(_):
@@ -137,11 +144,16 @@ def create_app(path: Path = B.PRICES, config: Path = R.CONFIG, actions: Path | N
             index[t] = TickerOut(ticker=t, type=g.type.iloc[0], first=g.date.min(), last=g.date.max(), bars=len(g))
         if not index:
             raise ValueError(f"{path}: no rows")
+        days.extend(sorted(set().union(*(g.date for g in B.table(path).values()))))
         yield
 
     @cache  # the data and config are fixed for the life of the process
     def signals(ticker: str, pattern: str) -> tuple[R.Signal, ...]:
         return tuple(R.run(plugins[pattern], configs[pattern], ticker, B.rows(ticker, path), ex.get(ticker, ())))
+
+    @cache  # shortcut: no lock, so two first requests at once both compute; add one if this gets real users
+    def scanned(since: date) -> tuple[R.Signal, ...]:
+        return tuple(R.scan(plugins, configs, since, ex, path))
 
     # /docs and /redoc load their scripts from a CDN; this app makes no network calls
     app = FastAPI(title="DSE EOD charts", lifespan=lifespan, docs_url=None, redoc_url=None)
@@ -183,6 +195,19 @@ def create_app(path: Path = B.PRICES, config: Path = R.CONFIG, actions: Path | N
         except R.PluginContractError as e:  # say which plugin broke which rule, not a bare 500
             raise HTTPException(500, str(e)) from None
         return [_signal(s) for s in sorted(found, key=lambda s: (s.signal_date, s.pattern))]
+
+    @app.get("/api/scan")
+    def scan(sessions: int = Query(20, ge=1, le=60)) -> ScanOut:
+        """Signals on every ticker in the file's last `sessions` dates, newest first. The dates are the
+        market's, not each ticker's: a share that stopped trading before them shows nothing."""
+        sessions = min(sessions, len(days))
+        since = date.fromisoformat(days[-sessions])
+        try:
+            found = sorted(scanned(since), key=lambda s: (s.ticker, s.pattern))
+        except R.PluginContractError as e:
+            raise HTTPException(500, str(e)) from None
+        found.sort(key=lambda s: s.signal_date, reverse=True)  # stable: tickers stay in order within a day
+        return ScanOut(since=since, sessions=sessions, signals=[_signal(s) for s in found])
 
     app.mount("/", StaticFiles(directory=WEB, html=True))  # last, so /api routes win
     return app

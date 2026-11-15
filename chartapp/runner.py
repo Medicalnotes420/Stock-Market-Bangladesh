@@ -168,13 +168,18 @@ def _check(plugin, d, window):
             raise bad(f"score {d.score} is outside 0 to 1")
 
 
-def run(plugin, cfg: Mapping, ticker: str, rows: Sequence[B.Row], ex: Sequence[date] = ()) -> list[Signal]:
+def run(plugin, cfg: Mapping, ticker: str, rows: Sequence[B.Row], ex: Sequence[date] = (),
+        since: date | None = None) -> list[Signal]:
     """Signals of one plugin over one ticker's full history. `ex` is the ticker's sorted ex-dates.
-    The plugin sees plain Bars; the flag columns and the action list only ever remove signals here."""
+    The plugin sees plain Bars; the flag columns and the action list only ever remove signals here.
+
+    With `since`, only bars dated `since` or later are tried. Each gets the window it would get anyway, so
+    the result is the full run's signals from that date on, provided `rows` is the whole history or holds
+    LOOKBACK - 1 bars before the first such bar. scan() is the caller that arranges that."""
     view = B.bars(tuple(rows))
     gaps = [0, *accumulate(r.gap_flag for r in rows)]  # gaps[j] = flagged bars before index j
     digest, out = config_hash(cfg), []
-    for i in range(len(rows)):
+    for i in range(bisect_left(rows, since, key=lambda r: r.date) if since else 0, len(rows)):
         start = max(0, i + 1 - plugin.LOOKBACK)
         if gaps[i + 1] - gaps[start]:
             continue  # an unexplained limit-breaking move is inside the window
@@ -187,4 +192,18 @@ def run(plugin, cfg: Mapping, ticker: str, rows: Sequence[B.Row], ex: Sequence[d
             continue
         _check(plugin, d, window)
         out.append(Signal(plugin.NAME, plugin.VERSION, digest, ticker, rows[i].date, d))
+    return out
+
+
+def scan(plugins: Mapping, configs: Mapping[str, Mapping], since: date, ex: Mapping[str, Sequence[date]],
+         path: Path = B.PRICES) -> list[Signal]:
+    """Signals of every enabled plugin on every ticker, on bars dated `since` or later: what a full run of
+    each ticker gives from that date on, without walking or even converting the years before it.
+    A ticker with no bar dated `since` or later gives nothing."""
+    before = max((plugins[name].LOOKBACK for name in configs), default=1) - 1  # enough for the longest window
+    out = []
+    for ticker in B.table(path):
+        rows = B.tail(ticker, since, before, path)
+        for name, cfg in configs.items():
+            out += run(plugins[name], cfg, ticker, rows, ex.get(ticker, ()), since)
     return out

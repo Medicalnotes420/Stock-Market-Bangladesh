@@ -1,3 +1,4 @@
+import gzip
 import importlib
 import random
 import sys
@@ -8,7 +9,7 @@ from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
-from chartapp import patterns, runner as R
+from chartapp import bars as B, patterns, runner as R
 from chartapp.bars import Bar, Row
 from chartapp.patterns import Detection, Point, Segment
 
@@ -77,6 +78,60 @@ class Slicing(unittest.TestCase):
         for future in (100, 101, 110, 199, 400):  # day of the ex-date; the history ends at day 99
             self.assertEqual(R.run(p, {}, "T", rows[:100], [D0 + timedelta(days=future)]),
                              R.run(p, {}, "T", rows[:100], []), future)
+
+
+class Since(unittest.TestCase):
+    """The market scan (design 5.6): only recent bars are tried, on a tail of the history."""
+
+    def test_a_tail_gives_the_full_runs_signals_from_that_date_on(self):
+        rows = make(400, gaps={90, 300})
+        ex = [D0 + timedelta(days=d) for d in (150, 350)]
+        for p in (plugin(up_day, lookback=15), plugin(always, lookback=5)):
+            full, cut = R.run(p, {}, "T", rows, ex), 0
+            for first in (0, 3, p.LOOKBACK - 1, p.LOOKBACK, 88, 95, 152, 165, 299, 310, 355, 399):
+                since = rows[first].date
+                tail = rows[max(0, first - (p.LOOKBACK - 1)):]  # just enough for the first window
+                want = [s for s in full if s.signal_date >= since]
+                self.assertEqual(R.run(p, {}, "T", tail, ex, since), want, (p.LOOKBACK, first))
+                self.assertEqual(R.run(p, {}, "T", rows, ex, since), want, (p.LOOKBACK, first))  # whole history
+                cut += bool(want) and len(tail) < len(rows)
+            self.assertGreater(cut, 5)  # the tail really was shorter, and there really were signals to find
+
+    def test_since_need_not_be_a_bar_and_may_be_past_the_end(self):
+        rows, p = [r for r in make(40) if (r.date - D0).days != 20], plugin(always, lookback=5)
+        self.assertEqual(days(R.run(p, {}, "T", rows, (), D0 + timedelta(days=20))), list(range(21, 40)))
+        self.assertEqual(R.run(p, {}, "T", rows, (), D0 + timedelta(days=40)), [])
+        self.assertEqual(R.run(p, {}, "T", [], (), D0), [])
+
+    def test_scan_gives_what_full_runs_give(self):
+        def line(t, r):
+            return (f"{r.date},{t},{r.open},{r.high},{r.low},{r.close},{r.volume}.0,{r.value},x,{r.gap_flag},"
+                    f"{r.close_raw},{r.adj_factor},,,False,False,Equity")
+        head = ("date,ticker,open,high,low,close,volume,value,source,gap_flag,close_raw,adj_factor,prev_close,limit,"
+                "lower_lock,upper_lock,type")
+        # LONG trades to the end; GAPPY has a flagged bar and an ex-date; GONE stopped trading at day 299
+        series = {"LONG": make(700), "GAPPY": make(700, gaps={380}, seed=9), "GONE": make(300, seed=4)}
+        ex = {"GAPPY": [D0 + timedelta(days=640)]}
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "p.csv.gz"
+            with gzip.open(path, "wt", newline="") as f:
+                f.write("\n".join([head, *(line(t, r) for t, rs in series.items() for r in rs)]) + "\n")
+            plugins = R.discover()
+            configs = R.configure(plugins, Path(d) / "no-such.toml")  # defaults: both real plugins
+            self.assertGreaterEqual(max(p.LOOKBACK for p in plugins.values()), 250)
+            full = [s for t in series for name, cfg in configs.items()
+                    for s in R.run(plugins[name], cfg, t, B.rows(t, path), ex.get(t, ()))]
+            for day in (0, 280, 299, 300, 450, 600, 660, 699):
+                since = D0 + timedelta(days=day)
+                want = [s for s in full if s.signal_date >= since]
+                self.assertEqual(R.scan(plugins, configs, since, ex, path), want, day)
+                if day in (450, 600):  # far past the longest look-back: scan worked on a tail and still found some
+                    self.assertGreater(len(want), 3)
+                    self.assertLess(len(B.tail("LONG", since, 249, path)), 700)
+                if day >= 300:
+                    self.assertNotIn("GONE", {s.ticker for s in want})
+            self.assertEqual(R.scan(plugins, configs, D0 + timedelta(days=700), ex, path), [])
+            self.assertEqual(R.scan(plugins, {}, D0, ex, path), [])  # nothing enabled
 
 
 class Blocked(unittest.TestCase):

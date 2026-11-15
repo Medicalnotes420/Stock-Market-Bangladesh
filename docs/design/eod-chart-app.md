@@ -1,7 +1,7 @@
 # DSE EOD chart app — design
 
-Status: v1 is built, and so is the first step after it (trendline utilities and `trendline_break`,
-2026-11-15). Written 2026-11-11 as a design; sections marked "settled when built" record what the code decided.
+Status: v1 is built, and so are the first two steps after it (trendline utilities and `trendline_break`,
+then the recent-sessions market scan, both 2026-11-15). Written 2026-11-11 as a design; sections marked "settled when built" record what the code decided.
 
 A local, read-only web app: pick a DSE ticker, see its end-of-day candles, and see where pattern
 plugins fired. FastAPI backend, Lightweight Charts frontend, pure-Python pattern plugins.
@@ -163,6 +163,7 @@ holding a decimal. Share counts and bar counts are JSON integers. No JSON floats
 | `/api/bars/{ticker}?from=&to=` | bars for one ticker |
 | `/api/patterns` | installed plugins and their effective config (after v1) |
 | `/api/detections/{ticker}?pattern=&from=&to=` | signals for one ticker |
+| `/api/scan?sessions=` | signals on every ticker in the last sessions (5.6) |
 | `/` | the static frontend |
 
 `from` and `to` only filter the output. The runner always walks the ticker's full history, so a signal
@@ -328,8 +329,9 @@ The rule is enforced by construction, then checked by tests.
 
 Cost: one ticker is at most 3,353 bars (median 3,008), each call sees at most `LOOKBACK` bars. Results are cached per
 `(ticker, pattern, config_hash)` for the life of the process.
-`shortcut: every bar re-runs detect on its own slice, fine for one ticker on demand; a market-wide scanner
-needs an incremental driver, and that driver must pass the prefix test in 7.2 before it replaces this one.`
+`shortcut: every bar re-runs detect on its own slice, fine for one ticker on demand and for the recent-bars
+scan in 5.6; a market-wide run over full history (about 30 minutes) needs an incremental driver, and that
+driver must pass the prefix test in 7.2 before it replaces this one.`
 
 ### 5.5 `trendline_break` (settled when built, 2026-11-15)
 
@@ -363,6 +365,34 @@ min_break_pct = 0.5  # how far past the line the close must be, as a percentage 
   window that holds it (5.4).
 - Not built: a minimum number of touches, a score, a maximum line age, lines through more than two pivots
   (`fit` and `touches` are there for that).
+
+### 5.6 Market scan (settled when built, 2026-11-15)
+
+Decision: the scanner answers "which tickers fired in the last N sessions", not "every signal ever on
+every ticker". No incremental driver was built.
+
+- **Why.** Measured on this machine: full history is about 3 s a ticker for both plugins, so about 30
+  minutes for 533 tickers, and `zigzag` is 95% of `trendline_break`'s time. The last 20 sessions of every
+  ticker cost about 8 s of `detect`. Converting every ticker's text to `Decimal` rows costs about 40 s,
+  more than the detection, so the scan converts only the rows it needs.
+- **How.** `runner.run(..., since=date)` starts its loop at the first bar dated `since` or later. Each bar
+  gets the window it would get anyway, so nothing about lookahead or blocked windows changes.
+  `bars.tail(ticker, since, before)` converts those bars plus `before` bars ahead of them, and
+  `runner.scan` asks for the longest `LOOKBACK` less one. A tail shorter than that would cut the first
+  windows and give different signals; `run` cannot tell, so `scan` is the only caller that passes `since`
+  with a tail.
+- **`since` is the market's date, not the ticker's**: the N-th most recent date anywhere in the file. A
+  share that stopped trading before it shows nothing. With fewer than N dates in the file, all are used.
+- `tail` checks date order over the whole ticker as text (ISO dates sort as text) before it counts, as
+  `rows` does after converting.
+- `/api/scan?sessions=20` (1 to 60) returns `{"since", "sessions", "signals"}`; `signals` has the shape of
+  `/api/detections`, newest first, then by ticker and pattern. About 17 s on first request at 20 sessions
+  and 27 s at 60, then cached per `since` for the life of the process.
+  `shortcut: no lock on that cache, so two first requests at once both compute; add one if more than one
+  person uses the app.`
+- Tested: a tail run equals the full run from that date on, with gap flags and ex-dates present, for fake
+  plugins, both real plugins on a 700-bar synthetic file, and three real tickers locally.
+- Not built: a scan table on the page, a ticker type filter, the full-history market run.
 
 ## 6. Shared pivot and trendline utilities (`geometry.py`)
 
@@ -619,7 +649,8 @@ Out, named so they are not built by accident:
 
 - Trendlines and `trendline_break` (`zigzag`, `Line`, `fit`, `touches`, `crossed`): first thing after v1.
   Built 2026-11-15 (sections 5.5 and 6).
-- Market-wide scanner, as-of replay slider, indicator overlays, raw-price toggle, log scale.
+- Market-wide scanner: built 2026-11-15 as a recent-sessions scan, API only (section 5.6).
+- As-of replay slider, indicator overlays, raw-price toggle, log scale.
 - `/api/patterns`, a ticker type filter, per-request config overrides, hot reload of data or config.
 - Outcome statistics pages or any edge claim.
 - Writing anything to disk.
@@ -641,7 +672,8 @@ Each step ends with its tests passing.
 8. `labels.py` with its tests.
 9. `labeled.toml` harness. Needs a person to label the first examples.
 
-After v1: trendline utilities and `trendline_break` (built 2026-11-15), then decide on the scanner.
+After v1: trendline utilities and `trendline_break` (built 2026-11-15), then the scanner (decided and
+built 2026-11-15, section 5.6). Next: a scan table on the page.
 
 ## 11. Decisions and open question
 

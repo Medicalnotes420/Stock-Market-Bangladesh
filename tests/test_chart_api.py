@@ -244,6 +244,29 @@ class Detections(unittest.TestCase):
         self.assertEqual(self.get("/api/detections/GAP"), [])  # flagged gap inside the window
         self.assertEqual(len(self.get("/api/bars/EXD")["bars"]), len(self.CLOSES))  # the bars are still served
 
+    def test_scan_lists_recent_signals_across_tickers(self):
+        s = self.get("/api/scan")  # the file has 9 dates, fewer than the default 20: all of them
+        self.assertEqual((s["since"], s["sessions"]), ("2026-01-01", 9))
+        self.assertEqual(s["signals"], self.get("/api/detections/SIG"))  # EXD and GAP are blocked here too
+        self.assertEqual(self.get("/api/scan?sessions=2"), {"since": "2026-01-08", "sessions": 2,
+                                                            "signals": s["signals"]})
+        self.assertEqual(self.get("/api/scan?sessions=1"), {"since": "2026-01-09", "sessions": 1, "signals": []})
+        for bad in ("0", "61", "-1", "x", "1.5"):
+            self.assertEqual(self.client.get(f"/api/scan?sessions={bad}").status_code, 422, bad)
+        self.assertEqual(self.client.post("/api/scan").status_code, 405)
+
+    def test_scan_is_newest_first_then_by_ticker(self):
+        d = Path(self.dir.name) / "two"
+        d.mkdir()
+        late = ["9", "10", "12", "13", "15", "13", "12", "14", "15.3"]  # the same break one day later
+        with gzip.open(d / "p.csv.gz", "wt", newline="") as f:
+            rows = lines("ZED", self.CLOSES) + lines("ABE", self.CLOSES) + lines("LATE", late)
+            f.write("\n".join([HEAD, *rows]) + "\n")
+        (d / "actions.csv").write_text("ticker,date,ratio\n")
+        with TestClient(create_app(d / "p.csv.gz", Path(self.dir.name) / "patterns.toml")) as c:
+            got = [(x["signal_date"], x["ticker"]) for x in no_floats(c.get("/api/scan"))["signals"]]
+        self.assertEqual(got, [("2026-01-09", "LATE"), ("2026-01-08", "ABE"), ("2026-01-08", "ZED")])
+
     def test_errors(self):
         r = self.client.get("/api/detections/NOPE")
         self.assertEqual((r.status_code, "unknown ticker" in r.text), (404, True))
