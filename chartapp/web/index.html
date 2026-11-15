@@ -14,9 +14,12 @@
   #stale.old { border-color: #b26a00; background: #fff4e0; }
   #legend { padding: 4px 12px; min-height: 1.4em; font-family: ui-monospace, Consolas, monospace; white-space: pre-wrap; }
   #chart { flex: 1; min-height: 300px; }
-  #found { max-height: 30vh; overflow: auto; border-top: 1px solid #ddd; padding: 4px 12px 8px; }
-  #found h2 { font-size: 14px; margin: 4px 0; }
-  #sigstatus { font-weight: normal; color: #555; margin-left: 8px; }
+  #found, #scan { max-height: 30vh; overflow: auto; border-top: 1px solid #ddd; padding: 4px 12px 8px; }
+  #scan { max-height: 20vh; }  /* no display rule here: the labeling view hides this section with `hidden` */
+  #found h2, #scan h2 { font-size: 14px; margin: 4px 0; }
+  #sigstatus, #scanstatus { font-weight: normal; color: #555; margin-left: 8px; }
+  #scanned tbody tr { cursor: pointer; }
+  #scanned tr[aria-current="true"] { background: #f0e6f6; }
   table { border-collapse: collapse; width: 100%; }
   th, td { text-align: left; padding: 2px 12px 2px 0; vertical-align: top; }
   th { border-bottom: 1px solid #ddd; }
@@ -46,6 +49,15 @@
   </table>
   <p>Press a date to draw that signal's shape on the chart; press it again to clear. Arrows mark signals,
     small dots mark limit-lock days, and "gap" marks a move no corporate action explains.</p>
+</section>
+<section id="scan" aria-labelledby="scanhead">
+  <h2 id="scanhead">Market scan <button id="scanrun" type="button">Scan the last 20 sessions</button>
+    <span id="scanstatus" role="status"></span></h2>
+  <table id="scanned" hidden>
+    <thead><tr><th scope="col">Date</th><th scope="col">Ticker</th><th scope="col">Pattern</th>
+      <th scope="col">Direction</th></tr></thead>
+    <tbody></tbody>
+  </table>
 </section>
 <script src="vendor/lightweight-charts.standalone.production.js"></script>
 <script type="module" src="app.js"></script>

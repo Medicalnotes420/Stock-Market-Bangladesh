@@ -1,5 +1,6 @@
 import gzip
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -7,10 +8,12 @@ import unittest
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
+from unittest import mock
 from urllib.parse import quote
 
 from fastapi.testclient import TestClient
 
+from chartapp import runner as R
 from chartapp.api import WEB, create_app, sessions_behind
 from tests.test_chart_bars import GOOD, HEAD
 
@@ -91,11 +94,15 @@ class Api(unittest.TestCase):
 
     def test_page_and_scripts_are_served(self):
         r = self.client.get("/")
-        self.assertEqual(r.status_code, 200)
+        self.assertEqual((r.status_code, r.headers["cache-control"]), (200, "no-cache"))
         self.assertIn('src="app.js"', r.text)
         for f in ("app.js", "chart.js", "vendor/lightweight-charts.standalone.production.js"):
             r = self.client.get("/" + f)
             self.assertEqual((r.status_code, r.headers["content-type"].split(";")[0]), (200, "text/javascript"), f)
+            # revalidated on every load, so an edited app.js is never run against a newer index.html
+            self.assertEqual(r.headers["cache-control"], "no-cache", f)
+            again = self.client.get("/" + f, headers={"If-None-Match": r.headers["etag"]})
+            self.assertEqual((again.status_code, again.headers["cache-control"]), (304, "no-cache"), f)
         # encoded, or httpx folds the ".." away before the request is sent
         for path in ("/vendor/%2e%2e/%2e%2e/api.py", "/..%5capi.py", "/%2e%2e/api.py"):
             self.assertEqual(self.client.get(path).status_code, 404, path)
@@ -107,6 +114,20 @@ class Frontend(unittest.TestCase):
         for word in ("Number(", "parseFloat", "parseInt", "innerHTML"):
             self.assertNotIn(word, app_js)
         self.assertIn("Number(", (WEB / "chart.js").read_text(encoding="utf-8"))
+
+    def test_every_element_app_js_looks_up_is_on_the_page(self):
+        # wiring only: what the scan table does is checked in the browser
+        app_js = (WEB / "app.js").read_text(encoding="utf-8")
+        ids = set(re.findall(r"\$\('(\w+)'\)", app_js))
+        self.assertLessEqual({"scan", "scanrun", "scanstatus", "scanned", "signals", "chart"}, ids)
+        html = (WEB / "index.html").read_text(encoding="utf-8")
+        for name in ids:
+            self.assertIn(f'id="{name}"', html)
+        self.assertEqual(html.count("<tbody></tbody>"), 2)  # the parser adds none to a table with only a thead
+        # the labeling view must not list the plugins' signals: the section is hidden, and no CSS rule
+        # gives #scan a display that would override `hidden`
+        self.assertIn("if (cut) $('scan').hidden = true;", app_js)
+        self.assertNotRegex(html, r"#scan\b[^{]*\{[^}]*display\s*:")
 
     def test_page_loads_nothing_from_the_network(self):
         for f in ("index.html", "app.js", "chart.js"):
@@ -266,6 +287,31 @@ class Detections(unittest.TestCase):
         with TestClient(create_app(d / "p.csv.gz", Path(self.dir.name) / "patterns.toml")) as c:
             got = [(x["signal_date"], x["ticker"]) for x in no_floats(c.get("/api/scan"))["signals"]]
         self.assertEqual(got, [("2026-01-09", "LATE"), ("2026-01-08", "ABE"), ("2026-01-08", "ZED")])
+
+    def test_two_patterns_on_one_ticker_and_day_come_in_pattern_order(self):
+        d = Path(self.dir.name) / "both"
+        d.mkdir()
+        # MID: the swing high 112.1 of 01-07 and the line through the zigzag highs 120 (01-03) and 112 (01-07)
+        # are both broken by 114 on 01-10. Then a new swing high, 118.1 on 01-11, is broken by 120 on 01-14:
+        # swing_breakout alone, so the date must come before the pattern in the detections order.
+        # ZED is the class's series two days later: swing_breakout only.
+        mid = ["100", "104", "120", "110", "100", "106", "112", "106", "100", "114", "118", "110", "108", "120"]
+        with gzip.open(d / "p.csv.gz", "wt", newline="") as f:
+            f.write("\n".join([HEAD, *lines("ZED", ["8", "9", *self.CLOSES]), *lines("MID", mid)]) + "\n")
+        (d / "actions.csv").write_text("ticker,date,ratio\n")
+        # plugins are found in name order, which a stable sort would hand back with no pattern in its key:
+        # turn the order round, so only sorting by pattern gives the right answer
+        found = R.discover()
+        self.assertEqual(list(found), ["swing_breakout", "trendline_break"])
+        with mock.patch.object(R, "discover", lambda: dict(reversed(found.items()))), \
+                TestClient(create_app(d / "p.csv.gz", Path(self.dir.name) / "patterns.toml")) as c:
+            scan = [(x["signal_date"], x["ticker"], x["pattern"]) for x in no_floats(c.get("/api/scan"))["signals"]]
+            one = [(x["signal_date"], x["pattern"]) for x in no_floats(c.get("/api/detections/MID"))]
+        self.assertEqual(scan, [("2026-01-14", "MID", "swing_breakout"),
+                                ("2026-01-10", "MID", "swing_breakout"), ("2026-01-10", "MID", "trendline_break"),
+                                ("2026-01-10", "ZED", "swing_breakout")])
+        self.assertEqual(one, [("2026-01-10", "swing_breakout"), ("2026-01-10", "trendline_break"),
+                               ("2026-01-14", "swing_breakout")])
 
     def test_errors(self):
         r = self.client.get("/api/detections/NOPE")

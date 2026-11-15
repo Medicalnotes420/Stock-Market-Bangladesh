@@ -1,7 +1,7 @@
 # DSE EOD chart app — design
 
 Status: v1 is built, and so are the first two steps after it (trendline utilities and `trendline_break`,
-then the recent-sessions market scan, both 2026-11-15). Written 2026-11-11 as a design; sections marked "settled when built" record what the code decided.
+then the recent-sessions market scan and its table on the page, all 2026-11-15). Written 2026-11-11 as a design; sections marked "settled when built" record what the code decided.
 
 A local, read-only web app: pick a DSE ticker, see its end-of-day candles, and see where pattern
 plugins fired. FastAPI backend, Lightweight Charts frontend, pure-Python pattern plugins.
@@ -392,7 +392,9 @@ every ticker". No incremental driver was built.
   person uses the app.`
 - Tested: a tail run equals the full run from that date on, with gap flags and ex-dates present, for fake
   plugins, both real plugins on a 700-bar synthetic file, and three real tickers locally.
-- Not built: a scan table on the page, a ticker type filter, the full-history market run.
+- **On the page** (built 2026-11-15, section 8): a "Market scan" table filled on demand.
+- Not built: a sessions selector on the page (it asks for the default 20), a ticker type filter, the
+  full-history market run.
 
 ## 6. Shared pivot and trendline utilities (`geometry.py`)
 
@@ -508,6 +510,10 @@ real-data tests skip there (8 skipped, 156 passed from a clean checkout) and sta
 - **Contract test**: a fake plugin returning a `Point` dated outside its window raises
   `PluginContractError`.
 - **API**: every response is parsed with a `parse_float` hook that raises; unknown ticker is 404.
+- **Order (added 2026-11-15)**: two plugins firing on one ticker and day come back in pattern order from
+  `/api/scan` and `/api/detections`, with plugin discovery reversed so only the sort can give that order.
+  `trendline_break` reports bullish when both lines break on one bar even where the bearish break is the
+  bigger one and its pivots the newer ones.
 - **Blocked windows (runner)**: a fake always-firing plugin gives no signal in the 10 bars after an
   ex-date or in a window holding a `gap_flag` bar.
 - **Static rules (AST scan of `chartapp/`)**: no `float` name or float literal, no `statistics` import;
@@ -616,6 +622,10 @@ offline. Its API changed between v4 and v5 (series creation, markers, panes); ch
 pinned version when building. The library is Apache-2.0 and asks for attribution; leave its attribution
 logo on.
 
+The page files are sent with `Cache-Control: no-cache` (settled 2026-11-15): the browser keeps them but
+asks on every load whether they changed. Without it the browser guessed, and after an edit ran an old
+`app.js` against a new `index.html`.
+
 - Candlestick series, volume histogram underneath. Time values are the `YYYY-MM-DD` strings from the API,
   so missing sessions simply do not appear.
 - Close-only bars are drawn as a line, not candles. A bar is close-only when its `o`, `h`, `l` and `c`
@@ -631,6 +641,19 @@ logo on.
   lines span the whole chart, so they are not used. Nothing is drawn to the right of the signal bar.
 - `gap` and lock flags are shown as small markers so an unadjusted gap is not mistaken for a crash.
 - A table under the chart lists signals. It prints the API's strings as they came.
+- Market scan (settled when built, 2026-11-15). A second table under the first, filled from `/api/scan`
+  when its button is pressed, not at page load: the first scan is about 17 s of CPU and would slow the
+  first chart. While it runs the button is disabled and a status line says so; a failure is shown there
+  and the button can be pressed again.
+  - Pressing a row (or the ticker button in it, for the keyboard) shows that ticker through the same path
+    as the ticker form, and when the ticker's signals arrive the row's signal is selected, as if its date
+    had been pressed. A signal is matched by date and pattern, which is unique within a ticker.
+  - The row's wish is taken by the next load of any ticker, so a later pick by hand never inherits it.
+  - The first time a ticker is opened this way its full-history signals are still computed (a few
+    seconds), so the shape appears after the candles.
+  - The labeling view hides the scan section: it lists the plugins' signals.
+  - Not tested in code beyond "every element `app.js` looks up is on the page"; the click-through was
+    checked in the browser.
 
 Float boundary: only `chart.js` calls `Number()` on price strings, and what it makes goes to the chart.
 `app.js` and the table never do arithmetic on prices.
@@ -649,7 +672,8 @@ Out, named so they are not built by accident:
 
 - Trendlines and `trendline_break` (`zigzag`, `Line`, `fit`, `touches`, `crossed`): first thing after v1.
   Built 2026-11-15 (sections 5.5 and 6).
-- Market-wide scanner: built 2026-11-15 as a recent-sessions scan, API only (section 5.6).
+- Market-wide scanner: built 2026-11-15 as a recent-sessions scan, with a table on the page (sections 5.6
+  and 8).
 - As-of replay slider, indicator overlays, raw-price toggle, log scale.
 - `/api/patterns`, a ticker type filter, per-request config overrides, hot reload of data or config.
 - Outcome statistics pages or any edge claim.
@@ -673,7 +697,7 @@ Each step ends with its tests passing.
 9. `labeled.toml` harness. Needs a person to label the first examples.
 
 After v1: trendline utilities and `trendline_break` (built 2026-11-15), then the scanner (decided and
-built 2026-11-15, section 5.6). Next: a scan table on the page.
+built 2026-11-15, section 5.6), then the scan table on the page (built 2026-11-15, section 8).
 
 ## 11. Decisions and open question
 

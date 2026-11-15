@@ -23,6 +23,16 @@ WEB = Path(__file__).parent / "web"
 mimetypes.add_type("text/javascript", ".js")
 
 
+class _Fresh(StaticFiles):
+    """Page files that the browser must revalidate. Without a Cache-Control it guesses how long a file
+    stays good, and after an edit it can run an old app.js against a new index.html."""
+
+    def file_response(self, *args, **kwargs):
+        r = super().file_response(*args, **kwargs)
+        r.headers["Cache-Control"] = "no-cache"  # still cached: a 304 when the ETag matches
+        return r
+
+
 class Meta(BaseModel):
     last_bar: date
     expected_session: date
@@ -209,7 +219,7 @@ def create_app(path: Path = B.PRICES, config: Path = R.CONFIG, actions: Path | N
         found.sort(key=lambda s: s.signal_date, reverse=True)  # stable: tickers stay in order within a day
         return ScanOut(since=since, sessions=sessions, signals=[_signal(s) for s in found])
 
-    app.mount("/", StaticFiles(directory=WEB, html=True))  # last, so /api routes win
+    app.mount("/", _Fresh(directory=WEB, html=True))  # last, so /api routes win
     return app
 
 
