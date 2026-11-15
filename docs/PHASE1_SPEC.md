@@ -37,6 +37,13 @@ Verification labels used below:
 - Slippage/impact per side = `max(0.10%, k · sqrt(order_value / ADTV_20d))` with k = 0.5 to start. Phase 4 sweeps it.
 - Cost sensitivity is reported at 1×, 1.5× and 2× this model. A strategy that dies at 1.5× is rejected.
 
+> **Amendment, 2026-11-15.** The code does not charge the model above. Since commit 560c238 (2026-11-11) it
+> charges a 0.30% commission per side (`async_risk_guard.DSE_COMMISSION_RATE`) plus impact
+> `1.0 · σ_daily(20) · sqrt(order_value / ADTV_20d)`, floored at 0.10% and capped at 10%, with no tax or
+> CDBL/misc line. You decided on 2026-11-15 that the code's rate stands. The figures above are left as
+> first written, and the "~1% round trip" remark later in this document predates this.
+> `docs/PHASE4_PREREG.md` records the same change as post-hoc.
+
 ---
 
 ## 2. Session schedule the system builds for
