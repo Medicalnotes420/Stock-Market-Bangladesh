@@ -12,5 +12,5 @@ Whenever invoked, audit the target modules against these 4 mandatory invariants:
 2. **Decimal-Only Commission & Tick Slippage:** Confirm `float` is never used for prices or cash. Verify buy reservations round up to `0.10 BDT` ticks (`ROUND_CEILING`), penalize L1 depth sweeps, and add `0.30%` DSE commission (`Decimal("0.0030")`).
 3. **Temporal Causality & Lock Hygiene:** Confirm incoming ticks enforce a monotonic watermark (`tick.exchange_ts_ms >= last_exchange_ts_ms`), staged orders enforce network latency (`fill_ts >= signal_ts + min_latency_ms`), and zero disk/network I/O happens inside `async with self._lock:` (all logging must use `asyncio.Queue.put_nowait`).
 4. **Automated Verification Gate:** Execute via Bash:
-   `pytest test_async_risk_guard.py test_quant_verifier_dse.py --asyncio-mode=strict -v`
-   Output a structured PASS/FAIL table. If any invariant fails, escalate to the `--advisor` (Opus 5.5) gate.
+   `python -m pytest test_async_risk_guard.py test_quant_verifier_dse.py --asyncio-mode=strict -v`
+   Output a structured PASS/FAIL table. If any invariant fails, report FAIL with file:line evidence to the parent conversation, which consults the Opus 5.5 advisor.

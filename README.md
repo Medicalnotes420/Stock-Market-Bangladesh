@@ -14,7 +14,7 @@ Newer days come from copies of DSE's Data Archive (personal use) in `data/raw/ds
 
 ## Run, in this order
 ```
-python -m unittest discover -s tests -t .   # all tests
+python -m pytest -q                         # all tests, incl. the quant gate (~2.5 min)
 python scripts/build_clean.py               # data/raw -> data/clean (~2 min)
 python -W ignore scripts/run_phase4.py      # backtests -> results/ (~3 min)
 python scripts/paper_run.py                 # daily paper run -> data/paper/ (open data/paper/status.html)
