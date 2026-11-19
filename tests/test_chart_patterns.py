@@ -8,6 +8,7 @@ from unittest import mock
 from chartapp import bars as B, runner as R
 from chartapp.bars import Bar
 from chartapp.patterns import swing_breakout, trendline_break
+from tests import SLOW
 from tests.test_chart_runner import make
 
 D0 = date(2026, 1, 1)
@@ -66,6 +67,7 @@ class EveryPlugin(unittest.TestCase):
                 want = [s for s in full if s.signal_date <= rows[k - 1].date] if k else []
                 self.assertEqual(R.run(PLUGINS[name], cfg, "T", rows[:k]), want, (name, k))
 
+    @SLOW
     @unittest.skipUnless(B.PRICES.exists() and R.ACTIONS.exists(), "data/clean is local only")
     def test_real_tickers_keep_the_contract(self):
         for ticker in ("CROWNCEMNT", "MONNOCERA", "00DSEX"):  # MONNOCERA has a bar with low 0.0

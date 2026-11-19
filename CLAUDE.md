@@ -1,6 +1,6 @@
 ## Model routing
 - Consult the Opus 5.5 advisor before a plan locks, after the same error twice, and before a task is marked done.
-- Use Haiku 5.5 for orchestration and simple edits (<30 lines). Once the plan locks, delegate complex implementations to the Sonnet 5.5 `coder` subagent.
+- Once the plan locks, delegate complex multi-file implementations to the Sonnet 5.5 `coder` subagent.
 - Use Grep/Glob/Read directly for single lookups; send only broad multi-file mapping to `search` (or Explore) and library docs to `docs`. Run `quant-verifier` before deploying quant changes.
 
 ## DSE Quantitative Risk & Execution Invariants (Mandatory)

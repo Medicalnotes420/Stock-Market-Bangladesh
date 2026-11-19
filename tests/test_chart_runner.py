@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from chartapp import bars as B, patterns, runner as R
 from chartapp.bars import Bar, Row
 from chartapp.patterns import Detection, Point, Segment
+from tests import SLOW
 
 D0 = date(2026, 1, 1)
 
@@ -103,6 +104,7 @@ class Since(unittest.TestCase):
         self.assertEqual(R.run(p, {}, "T", rows, (), D0 + timedelta(days=40)), [])
         self.assertEqual(R.run(p, {}, "T", [], (), D0), [])
 
+    @SLOW
     def test_scan_gives_what_full_runs_give(self):
         def line(t, r):
             return (f"{r.date},{t},{r.open},{r.high},{r.low},{r.close},{r.volume}.0,{r.value},x,{r.gap_flag},"
