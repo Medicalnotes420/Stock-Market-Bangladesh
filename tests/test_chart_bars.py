@@ -6,6 +6,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from chartapp import bars as B
+from tests import SLOW
 
 HEAD = ("date,ticker,open,high,low,close,volume,value,source,gap_flag,close_raw,adj_factor,prev_close,limit,"
         "lower_lock,upper_lock,type")
@@ -133,6 +134,7 @@ class RealFile(unittest.TestCase):
         self.assertTrue(all(r.high >= r.close >= r.low and r.high >= r.open >= r.low for r in rs))
         self.assertTrue(all(r.close.as_tuple().exponent >= -4 for r in rs))
 
+    @SLOW
     def test_no_empty_cells_in_loaded_columns(self):
         for g in B.table().values():
             self.assertFalse((g == "").any().any())

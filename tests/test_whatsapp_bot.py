@@ -8,6 +8,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from tests import SLOW
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import whatsapp_bot as bot  # noqa: E402
 
@@ -52,6 +54,7 @@ class TestWhatsAppBot(unittest.TestCase):
             bot.handle("c", "8801", "news")
         self.assertIn("Summary failed", out.call_args[0][1])
 
+    @SLOW
     def test_sdk_accepts_our_arguments(self):
         from anthropic.resources.beta.messages import Messages
         params = inspect.signature(Messages.create).parameters

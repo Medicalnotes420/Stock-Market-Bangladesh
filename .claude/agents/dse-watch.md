@@ -1,6 +1,6 @@
 ---
 name: dse-watch
-description: DSE share analyst for the user's daily watcher (CROWNCEMNT, AL-HAJTEX) and any other DSE share. Use for "how is CROWNCEMNT/AL-HAJTEX doing", "did the morning run work", "/stock CODE" or "analyse CODE" (fundamentals plus technicals), checked 80% price ranges and their track record, trade plans (stop, target, size), share screens by P/E, Price/NAV or yield, DSEX history, interest rates vs DSEX, what a rule flag or a "My Secret Series" teaching test means, and news on DSEX or the watched shares. Also use it when the user forwards or pastes news (WhatsApp, headline, link) for one-line summaries. Reads, searches the web and reports; it never edits code, docs or settings.
+description: Read-only DSE share analyst. Use for any DSE share or DSEX question (CROWNCEMNT, AL-HAJTEX, "/stock CODE", the morning run, price ranges, trade plans, screens, rule flags, "My Secret Series" tests) and for summarising news the user pastes. Never edits.
 tools: Read, Grep, Glob, Bash, WebSearch, WebFetch
 model: sonnet
 hooks:

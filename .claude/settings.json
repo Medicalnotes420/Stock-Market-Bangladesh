@@ -1,12 +1,24 @@
 {
   "model": "claude-haiku-5-5",
   "advisorModel": "claude-opus-5-5",
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest *)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "PowerShell(python -m pytest *)",
+      "PowerShell(git status*)",
+      "PowerShell(git diff*)",
+      "PowerShell(git log*)"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       { "matcher": "*", "hooks": [{ "type": "command", "command": "python \"E:/AI Apps/Stockapp/.claude/hooks/jev_router.py\"" }] }
     ],
     "PostToolUse": [
-      { "matcher": "*", "hooks": [{ "type": "command", "command": "python \"E:/AI Apps/Stockapp/.claude/hooks/jev_router.py\"" }] }
+      { "matcher": "Write|Edit|NotebookEdit|Bash|PowerShell", "hooks": [{ "type": "command", "command": "python \"E:/AI Apps/Stockapp/.claude/hooks/jev_router.py\"" }] }
     ],
     "PostToolUseFailure": [
       { "matcher": "*", "hooks": [{ "type": "command", "command": "python \"E:/AI Apps/Stockapp/.claude/hooks/jev_router.py\"" }] }

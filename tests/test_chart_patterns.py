@@ -8,6 +8,7 @@ from unittest import mock
 from chartapp import bars as B, runner as R
 from chartapp.bars import Bar
 from chartapp.patterns import swing_breakout, trendline_break
+from tests import SLOW
 from tests.test_chart_runner import make
 
 D0 = date(2026, 1, 1)
@@ -66,6 +67,7 @@ class EveryPlugin(unittest.TestCase):
                 want = [s for s in full if s.signal_date <= rows[k - 1].date] if k else []
                 self.assertEqual(R.run(PLUGINS[name], cfg, "T", rows[:k]), want, (name, k))
 
+    @SLOW
     @unittest.skipUnless(B.PRICES.exists() and R.ACTIONS.exists(), "data/clean is local only")
     def test_real_tickers_keep_the_contract(self):
         for ticker in ("CROWNCEMNT", "MONNOCERA", "00DSEX"):  # MONNOCERA has a bar with low 0.0
@@ -233,6 +235,26 @@ class TrendlineBreak(unittest.TestCase):
         with mock.patch.object(trendline_break, "_SIDES", trendline_break._SIDES[::-1]):
             self.assertEqual(self.fires(closes), [5])
             self.assertEqual(trendline_break.detect(series(closes), self.CFG).direction, "bearish")
+
+    def test_bullish_is_reported_even_when_the_bearish_break_is_bigger_and_newer(self):
+        # The test above cannot tell "bullish first" from "biggest break wins" or "newest pair wins": there the
+        # bullish break is both. Here the bearish one is both. ("Smallest" and "oldest" fail the test above.)
+        # Highs 200 (bar 1) and 180 (bar 3): resistance falls 10 a bar, 140 at bar 7, edge 141.4.
+        # Lows 100 (bar 2) and 120 (bar 4): support rises 10 a bar, 150 at bar 7, edge 148.5.
+        # Bars 5 and 6 (140, 145) sit between the lines; 142 at bar 7 is beyond both.
+        closes = ["150", "200", "100", "180", "120", "140", "145", "142"]
+        bars = series(closes)
+        self.assertEqual(self.fires(closes), [7])
+        bull = trendline_break.detect(bars, self.CFG)
+        with mock.patch.object(trendline_break, "_SIDES", trendline_break._SIDES[::-1]):
+            self.assertEqual(self.fires(closes), [7])
+            bear = trendline_break.detect(bars, self.CFG)
+        self.assertEqual((bull.direction, bear.direction), ("bullish", "bearish"))
+        # checked, not just claimed: the bearish break is the bigger one and its second pivot the newer one
+        close, resistance, support = bars[7].close, bull.segments[0].end.price, bear.segments[0].end.price
+        self.assertEqual((resistance, support), (Decimal("140"), Decimal("150")))
+        self.assertGreater((support - close) / support, (close - resistance) / resistance)
+        self.assertGreater(bear.points[1].date, bull.points[1].date)
 
     def test_no_signal_before_the_second_pivot_is_confirmed(self):
         # 113 is far over where the line would be, but the high at bar 3 has not reversed yet

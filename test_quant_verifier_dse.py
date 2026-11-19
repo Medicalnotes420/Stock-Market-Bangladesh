@@ -64,6 +64,39 @@ async def test_t2_and_cat_z_t3_settlement_blocks_premature_selling():
 
 
 @pytest.mark.asyncio
+async def test_cat_z_sale_on_t2_is_rejected_and_allowed_on_t3():
+    state = AsyncPortfolioState(
+        initial_cash=Decimal("100000.00"),
+        max_position_pct=Decimal("0.50"),
+        current_trading_day=1,
+    )
+
+    def tick(ts: int) -> MarketTick:
+        return MarketTick(
+            symbol="Z_JUTE",
+            category=ShareCategory.Z,
+            exchange_ts_ms=ts,
+            bid=Decimal("45.00"),
+            ask=Decimal("45.10"),
+            ask_volume=500,
+            upper_circuit=Decimal("49.50"),
+            lower_circuit=Decimal("40.50"),
+        )
+
+    await state.ingest_tick_and_buy(tick(1_000), qty=100, signal_generated_ts_ms=980)
+
+    # T+2: a Cat A lot would be saleable, a Cat Z lot is not
+    await state.advance_trading_day(days=2)
+    with pytest.raises(SettlementViolationError, match="Short-Sale Ban"):
+        await state.sell_matured_shares(tick(2_000), qty=100, signal_generated_ts_ms=1_950)
+
+    # T+3: matured, the sale goes through
+    await state.advance_trading_day(days=1)
+    await state.sell_matured_shares(tick(3_000), qty=100, signal_generated_ts_ms=2_950)
+    assert state.matured_positions.get("Z_JUTE", 0) == 0
+
+
+@pytest.mark.asyncio
 async def test_concurrent_sell_coroutines_cannot_double_spend_matured_shares():
     state = AsyncPortfolioState(initial_cash=Decimal("50000.00"), current_trading_day=1)
     state.matured_positions["GP"] = 200

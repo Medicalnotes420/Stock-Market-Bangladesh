@@ -8,6 +8,7 @@ let bars = [];            // bars of the ticker on screen
 let byDate = new Map();   // date -> bar
 let fired = new Map();    // date -> names of the patterns that fired on it
 let loading = 0;
+let wanted = null;        // {ticker, date, pattern}: the scan row whose signal the next load selects
 
 async function api(path) {
   const r = await fetch(path);
@@ -31,8 +32,10 @@ function cell(row, text) {
   return td;
 }
 
-function table(signals) {
+// Fills the signal table. `want` is a signal to select as its row is built; false if it was not there.
+function table(signals, want = null) {
   const body = $('signals').tBodies[0];
+  let hit = !want;
   body.replaceChildren();
   for (const s of signals.toReversed()) {  // newest first
     const row = body.insertRow();
@@ -52,15 +55,25 @@ function table(signals) {
     cell(row, Object.entries(s.levels).map(([name, value]) => `${name} ${value}`).join(', '));
     cell(row, s.points.map(p => `${p.role} ${p.p} on ${p.t}`).join(', '));
     cell(row, s.note);
+    if (want?.date === s.signal_date && want.pattern === s.pattern) {
+      pick.click();  // the table was just rebuilt, so nothing is pressed and this switches it on
+      pick.scrollIntoView({block: 'nearest'});
+      hit = true;
+    }
   }
+  return hit;
 }
 
 // Labeling view: /?to=2019-03-14#TICKER shows the chart as it stood that day, with later bars and the
 // plugins' own signals hidden, so an example can be labeled without knowing what came next.
 const cut = new URLSearchParams(location.search).get('to');
+if (cut) $('scan').hidden = true;  // the scan lists the plugins' signals too
 
 async function load(ticker) {
   const mine = ++loading;
+  // every load takes it, so a later pick by hand cannot inherit a scan row's selection
+  const want = wanted?.ticker === ticker ? wanted : null;
+  wanted = null;
   $('status').textContent = `Loading ${ticker}…`;
   try {
     const d = await api('/api/bars/' + encodeURIComponent(ticker) + (cut ? '?to=' + encodeURIComponent(cut) : ''));
@@ -98,8 +111,10 @@ async function load(ticker) {
     if (bars !== shown) return;
     for (const s of signals) fired.set(s.signal_date, [...(fired.get(s.signal_date) ?? []), s.pattern]);
     chart.mark(bars, signals);
-    table(signals);
-    $('sigstatus').textContent = signals.length === 1 ? '1 signal' : `${signals.length} signals`;
+    // a newer load took its own wish, and may have failed and left this chart up: do not select for it
+    const hit = table(signals, mine === loading ? want : null);
+    $('sigstatus').textContent = (signals.length === 1 ? '1 signal' : `${signals.length} signals`)
+      + (hit ? '' : `; the ${want.pattern} signal of ${want.date} is not among them`);  // hit is true without a want
     $('legend').textContent = legend(bars.at(-1));
   } catch (e) {
     if (bars === shown) $('sigstatus').textContent = `Could not load signals: ${e.message}`;
@@ -135,12 +150,50 @@ async function start() {
   else fromHash();
 }
 
+// Show a ticker; `want` is a signal of it to select once its signals arrive. False for an unknown ticker.
+function go(t, want = null) {
+  if (!known.has(t)) { $('status').textContent = `Unknown ticker ${t}`; return false; }
+  wanted = want;
+  if (t === hashTicker()) load(t);  // same hash fires no hashchange: retry after a failed load
+  else location.hash = encodeURIComponent(t);
+  return true;
+}
+
 $('pick').addEventListener('submit', e => {
   e.preventDefault();
-  const t = $('ticker').value.trim().toUpperCase();
-  if (t === hashTicker() && known.has(t)) load(t);  // same hash fires no hashchange: retry after a failed load
-  else if (known.has(t)) location.hash = encodeURIComponent(t);
-  else $('status').textContent = `Unknown ticker ${t}`;
+  go($('ticker').value.trim().toUpperCase());
+});
+
+$('scanrun').addEventListener('click', async () => {
+  const run = $('scanrun'), body = $('scanned').tBodies[0];
+  run.disabled = true;
+  $('scanstatus').textContent = 'Scanning every ticker… about 20 seconds the first time';
+  try {
+    const d = await api('/api/scan');
+    body.replaceChildren();
+    for (const s of d.signals) {  // newest first, as the API sends them
+      const row = body.insertRow();
+      cell(row, s.signal_date);
+      const open = document.createElement('button');  // for the keyboard; its click bubbles to the row
+      open.type = 'button';
+      open.textContent = s.ticker;
+      row.insertCell().append(open);
+      cell(row, s.pattern);
+      cell(row, s.direction);
+      row.addEventListener('click', () => {
+        if (!go(s.ticker, {ticker: s.ticker, date: s.signal_date, pattern: s.pattern})) return;
+        body.querySelector('[aria-current]')?.removeAttribute('aria-current');
+        row.setAttribute('aria-current', 'true');
+      });
+    }
+    $('scanned').hidden = false;
+    const n = d.signals.length, m = new Set(d.signals.map(s => s.ticker)).size;
+    $('scanstatus').textContent =
+      `${n} signal${n === 1 ? '' : 's'} on ${m} ticker${m === 1 ? '' : 's'} since ${d.since}`;
+  } catch (e) {
+    $('scanstatus').textContent = `Could not scan: ${e.message}`;
+  }
+  run.disabled = false;
 });
 addEventListener('hashchange', fromHash);
 chart.onHover(time => { $('legend').textContent = legend(byDate.get(time) ?? bars.at(-1)); });
